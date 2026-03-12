@@ -171,9 +171,19 @@ Brief description of changes.
 Rules:
 - Replace <package-name> with actual package names from the list above
 - Include ALL packages that were modified in the frontmatter
-- Use "patch" for bug fixes, "minor" for features, "major" for breaking changes
 - Keep the summary concise (1-3 sentences)
 - Use past tense (e.g. "Added", "Fixed", "Removed")
+
+Version bump rules (follow strictly):
+- "major": ANY removal, rename, or change to the signature/behavior of public API — this includes
+  removing or renaming public functions, methods, types, traits, structs, enums, variants, modules,
+  CLI flags/subcommands, RPC methods, config fields, or re-exports. If external code could depend on
+  it and the change would break that code, it is major. When in doubt between major and minor,
+  choose major.
+- "minor": new features, new public API surface (new functions, types, modules, optional fields),
+  deprecations (without removal), or backward-compatible behavior changes
+- "patch": bug fixes, performance improvements, internal refactors with no public API changes,
+  documentation, tests, dependency updates
 
 Git diff:
 {diff}"#;
