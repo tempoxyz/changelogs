@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2 (2026-03-17)
+
+### Patch Changes
+
+- Fixed config template placing `ignore` after `[changelog]` header causing it to be silently dropped. Respect `publish = false` in Cargo.toml by skipping unpublishable crates. Filter ignored packages during `publish` command. Added `SkipReason` enum to distinguish skip reasons in output. (by @Kartik, [#72](https://github.com/tempoxyz/changelogs/pull/72))
+
 ## 0.6.1 (2026-02-10)
 
 ### Patch Changes
