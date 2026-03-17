@@ -1,4 +1,4 @@
-use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult};
+use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult, SkipReason};
 use crate::error::Result;
 use cargo_metadata::MetadataCommand;
 use semver::Version;
@@ -129,9 +129,22 @@ impl EcosystemAdapter for RustAdapter {
             return Ok(PublishResult::Success);
         }
 
+        // Skip crates that have `publish = false` in their Cargo.toml
+        let content = std::fs::read_to_string(&pkg.manifest_path)?;
+        let doc: DocumentMut = content.parse()?;
+        if let Some(publish) = doc
+            .get("package")
+            .and_then(|p| p.get("publish"))
+            .and_then(|v| v.as_bool())
+        {
+            if !publish {
+                return Ok(PublishResult::Skipped(SkipReason::NotPublishable));
+            }
+        }
+
         match std::env::var("CARGO_REGISTRY_TOKEN") {
             Ok(token) if !token.is_empty() => {}
-            _ => return Ok(PublishResult::Skipped),
+            _ => return Ok(PublishResult::Skipped(SkipReason::NoToken)),
         }
 
         let mut cmd = Command::new("cargo");
@@ -423,7 +436,29 @@ my-dep = { version = \"1.0.0\" }\n";
             std::env::remove_var("CARGO_REGISTRY_TOKEN");
         }
         let result = RustAdapter::publish(&pkg, false, None).unwrap();
-        assert_eq!(result, PublishResult::Skipped);
+        assert_eq!(result, PublishResult::Skipped(SkipReason::NoToken));
+    }
+
+    #[test]
+    fn publish_skipped_when_publish_false() {
+        let dir = TempDir::new().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            "[package]\nname = \"test\"\nversion = \"1.0.0\"\npublish = false\n",
+        )
+        .unwrap();
+
+        let pkg = Package {
+            name: "test".to_string(),
+            version: Version::new(1, 0, 0),
+            path: dir.path().to_path_buf(),
+            manifest_path: manifest,
+            dependencies: vec![],
+        };
+
+        let result = RustAdapter::publish(&pkg, false, None).unwrap();
+        assert_eq!(result, PublishResult::Skipped(SkipReason::NotPublishable));
     }
 
     #[test]

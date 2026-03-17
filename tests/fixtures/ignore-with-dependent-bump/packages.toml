@@ -1,0 +1,8 @@
+[[packages]]
+name = "internal-lib"
+version = "0.1.0"
+
+[[packages]]
+name = "cli-app"
+version = "1.0.0"
+deps = ["internal-lib"]

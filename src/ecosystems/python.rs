@@ -1,4 +1,4 @@
-use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult};
+use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult, SkipReason};
 use crate::error::{Error, Result};
 use semver::Version;
 use std::collections::HashMap;
@@ -170,7 +170,7 @@ impl EcosystemAdapter for PythonAdapter {
             .map(|v| !v.is_empty())
             .unwrap_or(false);
         if !has_password && !has_username {
-            return Ok(PublishResult::Skipped);
+            return Ok(PublishResult::Skipped(SkipReason::NoToken));
         }
 
         let pkg_path = pkg.path.canonicalize().map_err(|e| {
@@ -935,7 +935,7 @@ version = "1.0.0"
             std::env::remove_var("TWINE_USERNAME");
         }
         let result = PythonAdapter::publish(pkg, false, None).unwrap();
-        assert_eq!(result, PublishResult::Skipped);
+        assert_eq!(result, PublishResult::Skipped(SkipReason::NoToken));
     }
 
     #[test]

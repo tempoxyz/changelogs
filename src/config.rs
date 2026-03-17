@@ -126,10 +126,8 @@ impl Config {
 # "patch" | "minor" | "none"
 dependent_bump = "patch"
 
-[changelog]
-# "per-crate" - CHANGELOG.md in each package
-# "root" - Single CHANGELOG.md at workspace root
-format = "per-crate"
+# Packages to ignore
+ignore = []
 
 # Fixed groups: all packages always share the same version
 # [[fixed]]
@@ -139,8 +137,10 @@ format = "per-crate"
 # [[linked]]
 # members = ["sdk-core", "sdk-macros"]
 
-# Packages to ignore
-ignore = []
+[changelog]
+# "per-crate" - CHANGELOG.md in each package
+# "root" - Single CHANGELOG.md at workspace root
+format = "per-crate"
 
 # AI-assisted changelog generation
 # [ai]
@@ -209,6 +209,18 @@ mod tests {
 
         let result = Config::load(dir.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default_toml_ignore_is_top_level() {
+        let content = Config::default_toml();
+        let config: Config = toml::from_str(content).unwrap();
+        // ignore must parse as a top-level field, not silently land under [changelog]
+        assert!(config.ignore.is_empty());
+        // Verify it's actually parsed by setting a value
+        let with_ignore = content.replace("ignore = []", r#"ignore = ["foo", "bar"]"#);
+        let config: Config = toml::from_str(&with_ignore).unwrap();
+        assert_eq!(config.ignore, vec!["foo", "bar"]);
     }
 
     #[test]

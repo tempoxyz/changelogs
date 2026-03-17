@@ -1,0 +1,2 @@
+dependent_bump = "patch"
+ignore = ["internal-lib"]

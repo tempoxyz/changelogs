@@ -39,10 +39,19 @@ impl Ecosystem {
 pub enum PublishResult {
     /// Package was successfully published
     Success,
-    /// Publishing was skipped (e.g., no token configured)
-    Skipped,
+    /// Publishing was skipped
+    Skipped(SkipReason),
     /// Publishing failed
     Failed,
+}
+
+/// Reason a package publish was skipped
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// No registry token configured
+    NoToken,
+    /// Package has `publish = false`
+    NotPublishable,
 }
 
 impl std::fmt::Display for Ecosystem {

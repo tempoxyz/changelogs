@@ -1,5 +1,5 @@
 use anyhow::Result;
-use changelogs::{Config, Ecosystem, Package, PublishResult, Workspace};
+use changelogs::{Config, Ecosystem, Package, PublishResult, SkipReason, Workspace};
 use std::process::Command;
 
 pub fn run_with_ecosystem(
@@ -8,9 +8,13 @@ pub fn run_with_ecosystem(
     ecosystem: Option<Ecosystem>,
 ) -> Result<()> {
     let workspace = Workspace::load_with_ecosystem(ecosystem)?;
-    let _config = Config::load(&workspace.changelog_dir)?;
+    let config = Config::load(&workspace.changelog_dir)?;
 
-    let packages = workspace.get_publishable_packages()?;
+    let all_publishable = workspace.get_publishable_packages()?;
+    let packages: Vec<&Package> = all_publishable
+        .into_iter()
+        .filter(|pkg| !config.ignore.contains(&pkg.name))
+        .collect();
 
     if packages.is_empty() {
         println!("No unpublished packages found");
@@ -35,8 +39,11 @@ pub fn run_with_ecosystem(
                 }
                 published.push(pkg);
             }
-            Ok(PublishResult::Skipped) => {
-                println!("⊘ (no token)");
+            Ok(PublishResult::Skipped(reason)) => {
+                match reason {
+                    SkipReason::NoToken => println!("⊘ (no token)"),
+                    SkipReason::NotPublishable => println!("⊘ (publish = false)"),
+                }
                 skipped.push(pkg);
             }
             Ok(PublishResult::Failed) => {

@@ -288,6 +288,21 @@ fn golden_fixed_and_linked() {
 }
 
 #[test]
+fn golden_major_bump() {
+    run_golden_test("major-bump");
+}
+
+#[test]
+fn golden_ignore_with_dependent_bump() {
+    run_golden_test("ignore-with-dependent-bump");
+}
+
+#[test]
+fn golden_multi_crate_multi_changelog() {
+    run_golden_test("multi-crate-multi-changelog");
+}
+
+#[test]
 fn golden_invalid_frontmatter() {
     let fixture = fixtures_root().join("invalid-frontmatter");
     let changelog_dir = fixture.join("changelog");
