@@ -1,0 +1,13 @@
+[[packages]]
+name = "common"
+version = "0.1.0"
+
+[[packages]]
+name = "wallet"
+version = "0.1.0"
+deps = ["common"]
+
+[[packages]]
+name = "request"
+version = "0.1.0"
+deps = ["common"]

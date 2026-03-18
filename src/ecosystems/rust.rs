@@ -60,6 +60,25 @@ impl EcosystemAdapter for RustAdapter {
         let content = std::fs::read_to_string(manifest_path)?;
         let doc: DocumentMut = content.parse()?;
 
+        // Check if version uses workspace inheritance (version.workspace = true)
+        if Self::is_workspace_inherited(&doc, "version") {
+            let root = Self::find_workspace_root(manifest_path)?;
+            let root_manifest = root.join("Cargo.toml");
+            let root_content = std::fs::read_to_string(&root_manifest)?;
+            let root_doc: DocumentMut = root_content.parse()?;
+
+            let version_str = root_doc
+                .get("workspace")
+                .and_then(|w| w.get("package"))
+                .and_then(|p| p.get("version"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    crate::error::Error::VersionNotFound(root_manifest.display().to_string())
+                })?;
+
+            return Ok(version_str.parse()?);
+        }
+
         let version_str = doc["package"]["version"].as_str().ok_or_else(|| {
             crate::error::Error::VersionNotFound(manifest_path.display().to_string())
         })?;
@@ -69,8 +88,22 @@ impl EcosystemAdapter for RustAdapter {
 
     fn write_version(manifest_path: &Path, version: &Version) -> Result<()> {
         let content = std::fs::read_to_string(manifest_path)?;
-        let mut doc: DocumentMut = content.parse()?;
+        let doc: DocumentMut = content.parse()?;
 
+        // If version is inherited from workspace, write to root Cargo.toml instead
+        if Self::is_workspace_inherited(&doc, "version") {
+            let root = Self::find_workspace_root(manifest_path)?;
+            let root_manifest = root.join("Cargo.toml");
+            let root_content = std::fs::read_to_string(&root_manifest)?;
+            let mut root_doc: DocumentMut = root_content.parse()?;
+
+            root_doc["workspace"]["package"]["version"] = toml_edit::value(version.to_string());
+
+            std::fs::write(&root_manifest, root_doc.to_string())?;
+            return Ok(());
+        }
+
+        let mut doc: DocumentMut = content.parse()?;
         doc["package"]["version"] = toml_edit::value(version.to_string());
 
         std::fs::write(manifest_path, doc.to_string())?;
@@ -182,6 +215,43 @@ impl EcosystemAdapter for RustAdapter {
 }
 
 impl RustAdapter {
+    /// Check if a field in `[package]` uses workspace inheritance (e.g., `version.workspace = true`).
+    fn is_workspace_inherited(doc: &DocumentMut, field: &str) -> bool {
+        doc.get("package")
+            .and_then(|p| p.get(field))
+            .and_then(|v| v.as_table_like())
+            .and_then(|t| t.get("workspace"))
+            .and_then(|w| w.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Walk up from a crate's manifest to find the workspace root containing `[workspace]`.
+    fn find_workspace_root(manifest_path: &Path) -> Result<std::path::PathBuf> {
+        let mut current = manifest_path
+            .parent()
+            .ok_or_else(|| crate::error::Error::VersionNotFound("no parent directory".to_string()))?
+            .to_path_buf();
+
+        loop {
+            let candidate = current.join("Cargo.toml");
+            if candidate.exists() && candidate != manifest_path {
+                let content = std::fs::read_to_string(&candidate)?;
+                if content.contains("[workspace]") {
+                    return Ok(current);
+                }
+            }
+
+            match current.parent() {
+                Some(parent) => current = parent.to_path_buf(),
+                None => {
+                    return Err(crate::error::Error::VersionNotFound(
+                        "workspace root not found".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
     fn update_dep_version_in_item(dep: &mut toml_edit::Item, new_version: &Version) -> bool {
         if let Some(table) = dep.as_inline_table_mut() {
             if table.contains_key("version") {
@@ -459,6 +529,63 @@ my-dep = { version = \"1.0.0\" }\n";
 
         let result = RustAdapter::publish(&pkg, false, None).unwrap();
         assert_eq!(result, PublishResult::Skipped(SkipReason::NotPublishable));
+    }
+
+    #[test]
+    fn test_read_version_workspace_inherited() {
+        let dir = TempDir::new().unwrap();
+
+        // Root Cargo.toml with workspace.package.version
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/foo\"]\n\n[workspace.package]\nversion = \"2.5.0\"\n",
+        )
+        .unwrap();
+
+        // Crate with version.workspace = true
+        let crate_dir = dir.path().join("crates").join("foo");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        let manifest = crate_dir.join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            "[package]\nname = \"foo\"\nversion.workspace = true\n",
+        )
+        .unwrap();
+
+        let version = RustAdapter::read_version(&manifest).unwrap();
+        assert_eq!(version, Version::new(2, 5, 0));
+    }
+
+    #[test]
+    fn test_write_version_workspace_inherited() {
+        let dir = TempDir::new().unwrap();
+
+        // Root Cargo.toml with workspace.package.version
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/foo\"]\n\n[workspace.package]\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+
+        // Crate with version.workspace = true
+        let crate_dir = dir.path().join("crates").join("foo");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        let manifest = crate_dir.join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            "[package]\nname = \"foo\"\nversion.workspace = true\n",
+        )
+        .unwrap();
+
+        RustAdapter::write_version(&manifest, &Version::new(3, 0, 0)).unwrap();
+
+        // Root should be updated
+        let root_content = std::fs::read_to_string(dir.path().join("Cargo.toml")).unwrap();
+        assert!(root_content.contains("version = \"3.0.0\""));
+
+        // Crate should be untouched
+        let crate_content = std::fs::read_to_string(&manifest).unwrap();
+        assert!(crate_content.contains("version.workspace = true"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::BumpType;
 use crate::changelog_entry::Changelog;
-use crate::config::{Config, DependentBump};
+use crate::config::{ChangelogFormat, Config, DependentBump};
 use crate::graph::DependencyGraph;
 use crate::workspace::Workspace;
 use semver::Version;
@@ -56,16 +56,32 @@ pub fn assemble(workspace: &Workspace, changelogs: Vec<Changelog>, config: &Conf
         }
     }
 
-    for group in &config.fixed {
-        let max_bump = group
-            .members
+    // Build effective fixed groups: explicit ones plus, when using root format,
+    // an implicit group of all non-ignored workspace packages.
+    let mut fixed_groups: Vec<Vec<String>> =
+        config.fixed.iter().map(|g| g.members.clone()).collect();
+
+    if config.changelog.format == ChangelogFormat::Root {
+        let all_members: Vec<String> = workspace
+            .package_names()
+            .into_iter()
+            .filter(|n| !config.ignore.contains(&n.to_string()))
+            .map(|n| n.to_string())
+            .collect();
+        if all_members.len() > 1 {
+            fixed_groups.push(all_members);
+        }
+    }
+
+    for members in &fixed_groups {
+        let max_bump = members
             .iter()
             .filter_map(|m| bump_map.get(m))
             .max()
             .copied();
 
         if let Some(bump) = max_bump {
-            for member in &group.members {
+            for member in members {
                 if !config.ignore.contains(member) {
                     bump_map.insert(member.clone(), bump);
                 }

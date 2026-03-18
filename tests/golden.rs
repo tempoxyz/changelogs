@@ -303,6 +303,11 @@ fn golden_multi_crate_multi_changelog() {
 }
 
 #[test]
+fn golden_root_fixed_group() {
+    run_golden_test("root-fixed-group");
+}
+
+#[test]
 fn golden_invalid_frontmatter() {
     let fixture = fixtures_root().join("invalid-frontmatter");
     let changelog_dir = fixture.join("changelog");
