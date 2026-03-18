@@ -33,7 +33,9 @@ runs:
         CHANGELOGS=$(git diff --name-only origin/${{ inputs.ref }}...HEAD -- '.changelog/*.md' | grep -v config.toml || true)
         if [ -n "$CHANGELOGS" ]; then
           echo "found=true" >> $GITHUB_OUTPUT
-          echo "changelog_files=$CHANGELOGS" >> $GITHUB_OUTPUT
+          echo "changelog_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOGS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
         else
           echo "found=false" >> $GITHUB_OUTPUT
         fi
