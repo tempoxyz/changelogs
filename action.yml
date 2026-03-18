@@ -69,12 +69,12 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.cargo/bin/changelogs
-        key: changelogs-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml') }}
+        key: changelogs-${{ runner.os }}-${{ runner.arch }}-${{ github.action_ref || hashFiles('Cargo.toml') }}
 
     - name: Install changelogs
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: cargo install changelogs
+      run: cargo install --path "${{ github.action_path }}"
 
     - name: Check for changelogs
       id: check
@@ -113,11 +113,28 @@ runs:
           exit $version_exit
         fi
         
-        # Extract versions from output (e.g., "changelogs 0.0.1 → 0.1.0" -> "changelogs@0.1.0")
+        # Check if using root changelog format (unified versioning)
+        changelog_format="per-crate"
+        if [ -f ".changelog/config.toml" ]; then
+          fmt=$(grep -E '^\s*format\s*=' .changelog/config.toml | sed 's/.*=\s*"\(.*\)"/\1/' | tr -d '[:space:]')
+          if [ "$fmt" = "root" ]; then
+            changelog_format="root"
+          fi
+        fi
+        
+        # Extract versions from output (e.g., "tempo-common 0.1.4 → 0.1.5" -> "tempo-common@0.1.5")
         all_versions=$(echo "$output" | grep -oE '[a-zA-Z0-9_-]+ [0-9]+\.[0-9]+\.[0-9]+ → [0-9]+\.[0-9]+\.[0-9]+' | sed 's/ .* → /@/')
         count=$(echo "$all_versions" | grep -c . || echo 0)
         
-        if [ "$count" -eq 0 ]; then
+        if [ "$changelog_format" = "root" ]; then
+          # Root format: all packages share one version, use v{version}
+          new_version=$(echo "$all_versions" | head -1 | sed 's/.*@//')
+          if [ -n "$new_version" ]; then
+            versions="\`v$new_version\`"
+          else
+            versions=""
+          fi
+        elif [ "$count" -eq 0 ]; then
           versions=""
         elif [ "$count" -eq 1 ]; then
           versions="\`$(echo "$all_versions" | head -1)\`"
