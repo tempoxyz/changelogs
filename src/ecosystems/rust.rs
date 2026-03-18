@@ -236,7 +236,8 @@ impl RustAdapter {
             let candidate = current.join("Cargo.toml");
             if candidate.exists() && candidate != manifest_path {
                 let content = std::fs::read_to_string(&candidate)?;
-                if content.contains("[workspace]") {
+                let doc: DocumentMut = content.parse()?;
+                if doc.get("workspace").is_some() {
                     return Ok(current);
                 }
             }
