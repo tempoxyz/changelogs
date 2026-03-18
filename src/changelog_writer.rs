@@ -5,6 +5,7 @@ use crate::error::Result;
 use crate::plan::PackageRelease;
 use crate::workspace::Workspace;
 use chrono::Utc;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 
@@ -471,11 +472,117 @@ pub fn write_changelogs_with_date(
             }
         }
         ChangelogFormat::Root => {
+            // Group releases by version so fixed-group packages sharing the same
+            // version get a single heading instead of duplicate `## version` blocks.
+            let mut by_version: BTreeMap<String, Vec<&PackageRelease>> = BTreeMap::new();
+            for release in releases {
+                by_version
+                    .entry(release.new_version.to_string())
+                    .or_default()
+                    .push(release);
+            }
+
             let mut combined_entry = String::new();
 
-            for release in releases {
-                let entry = generate_entry_with_date(release, changelogs, changelog_dir, date);
-                combined_entry.push_str(&entry);
+            for (version, group) in &by_version {
+                if group.len() == 1 {
+                    // Single release at this version — use existing per-package generation.
+                    let entry = generate_entry_with_date(group[0], changelogs, changelog_dir, date);
+                    combined_entry.push_str(&entry);
+                } else {
+                    // Multiple releases share this version — merge into one heading
+                    // and deduplicate changelog entries that appear in multiple packages.
+                    combined_entry.push_str(&format!("## {} ({})\n\n", version, date));
+
+                    let github_url = get_github_url();
+
+                    let mut major_changes = Vec::new();
+                    let mut minor_changes = Vec::new();
+                    let mut patch_changes = Vec::new();
+                    let mut seen_changelog_ids: HashSet<&str> = HashSet::new();
+
+                    for release in group {
+                        for changelog in changelogs {
+                            if !release.changelog_ids.contains(&changelog.id) {
+                                continue;
+                            }
+                            if !seen_changelog_ids.insert(&changelog.id) {
+                                continue;
+                            }
+
+                            // Find the highest bump level for this changelog across
+                            // all packages in the group.
+                            let bump = group
+                                .iter()
+                                .filter(|r| r.changelog_ids.contains(&changelog.id))
+                                .flat_map(|r| {
+                                    changelog
+                                        .releases
+                                        .iter()
+                                        .filter(|rel| rel.package == r.name)
+                                        .map(|rel| rel.bump)
+                                })
+                                .max()
+                                .unwrap_or(BumpType::Patch);
+
+                            let summary = changelog.summary.trim().to_string();
+
+                            let (link_info, authors) = github_url
+                                .as_ref()
+                                .and_then(|base| {
+                                    let info = changelog_entry::get_commit_info(
+                                        changelog_dir,
+                                        &changelog.id,
+                                    )?;
+                                    let link_info = if let Some(pr) = info.pr_number {
+                                        Some((format!("{}/pull/{}", base, pr), format!("#{}", pr)))
+                                    } else {
+                                        let short_sha =
+                                            &info.commit_sha[..7.min(info.commit_sha.len())];
+                                        Some((
+                                            format!("{}/commit/{}", base, short_sha),
+                                            short_sha.to_string(),
+                                        ))
+                                    };
+                                    Some((link_info, info.authors))
+                                })
+                                .unwrap_or((None, Vec::new()));
+
+                            let change = ChangeWithMeta {
+                                summary,
+                                link: link_info,
+                                authors,
+                            };
+                            match bump {
+                                BumpType::Major => major_changes.push(change),
+                                BumpType::Minor => minor_changes.push(change),
+                                BumpType::Patch => patch_changes.push(change),
+                            }
+                        }
+                    }
+
+                    if !major_changes.is_empty() {
+                        combined_entry.push_str("### Major Changes\n\n");
+                        for change in major_changes {
+                            write_change_lines(&mut combined_entry, &change);
+                        }
+                        combined_entry.push('\n');
+                    }
+                    if !minor_changes.is_empty() {
+                        combined_entry.push_str("### Minor Changes\n\n");
+                        for change in minor_changes {
+                            write_change_lines(&mut combined_entry, &change);
+                        }
+                        combined_entry.push('\n');
+                    }
+                    if !patch_changes.is_empty() {
+                        combined_entry.push_str("### Patch Changes\n\n");
+                        for change in patch_changes {
+                            write_change_lines(&mut combined_entry, &change);
+                        }
+                        combined_entry.push('\n');
+                    }
+                }
             }
 
             let changelog_path = workspace.root.join("CHANGELOG.md");

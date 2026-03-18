@@ -1,0 +1,7 @@
+dependent_bump = "none"
+
+[[fixed]]
+members = ["common", "wallet", "request"]
+
+[changelog]
+format = "root"
