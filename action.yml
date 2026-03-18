@@ -273,7 +273,7 @@ runs:
               BEGIN { printing=0 }
               /^## / {
                 if (printing) exit
-                if (index($0, ver) > 0) { printing=1; next }
+                if ($0 ~ "^## " ver "[ (]") { printing=1; next }
               }
               printing { print }
             ' "$changelog_file")
