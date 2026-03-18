@@ -1,4 +1,5 @@
 use anyhow::Result;
+use changelogs::config::ChangelogFormat;
 use changelogs::{Config, Ecosystem, Package, PublishResult, SkipReason, Workspace};
 use std::process::Command;
 
@@ -63,7 +64,14 @@ pub fn run_with_ecosystem(
     if !dry_run {
         let taggable: Vec<&Package> = published.iter().chain(skipped.iter()).copied().collect();
         if !taggable.is_empty() {
-            create_git_tags(&workspace, &taggable)?;
+            if config.changelog.format == ChangelogFormat::Root {
+                // Root format = single product: create one `v{version}` tag
+                if let Some(pkg) = taggable.first() {
+                    create_unified_tag(&pkg.version)?;
+                }
+            } else {
+                create_git_tags(&workspace, &taggable)?;
+            }
         }
     }
 
@@ -85,6 +93,25 @@ pub fn run_with_ecosystem(
         println!("Successfully published {} package(s)", published.len());
     }
 
+    Ok(())
+}
+
+fn create_unified_tag(version: &semver::Version) -> Result<()> {
+    let tag = format!("v{}", version);
+
+    let output = Command::new("git")
+        .args(["tag", "-a", &tag, "-m", &format!("Release {}", tag)])
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run 'git tag': {}", e))?;
+
+    if output.status.success() {
+        println!("Created git tag: {}", tag);
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Failed to create git tag {}: {}", tag, stderr.trim());
+    }
+
+    println!("\nDon't forget to push tags: git push --follow-tags");
     Ok(())
 }
 

@@ -260,13 +260,20 @@ runs:
           fi
           
           if [ -n "$changelog_file" ]; then
-            changelog_notes=$(awk -v tag="$tag" '
-              BEGIN { found=0; printing=0 }
-              /^## `.*`/ {
+            # Extract version from tag: "pkg@1.2.3" -> "1.2.3", "v1.2.3" -> "1.2.3"
+            if [[ "$tag" == v* ]]; then
+              version="${tag#v}"
+            elif [[ "$tag" == *"@"* ]]; then
+              version="${tag#*@}"
+            else
+              version="$tag"
+            fi
+            
+            changelog_notes=$(awk -v ver="$version" '
+              BEGIN { printing=0 }
+              /^## / {
                 if (printing) exit
-                gsub(/`/, "", $0)
-                gsub(/^## /, "", $0)
-                if ($0 == tag) { found=1; printing=1; next }
+                if (index($0, ver) > 0) { printing=1; next }
               }
               printing { print }
             ' "$changelog_file")
