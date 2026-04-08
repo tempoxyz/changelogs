@@ -31,6 +31,9 @@ inputs:
     description: 'Branch name for the version PR'
     required: false
     default: 'changelog-release/main'
+  post-version-command:
+    description: 'Command to run after version bumps but before PR creation (e.g. refreshing lockfiles).'
+    required: false
   github-token:
     description: 'GitHub token for creating PRs'
     required: false
@@ -158,6 +161,11 @@ runs:
           echo "title=Release $versions" >> $GITHUB_OUTPUT
           echo "commit-msg=Release $versions" >> $GITHUB_OUTPUT
         fi
+
+    - name: Run post-version command
+      if: steps.check.outputs.hasChangelogs == 'true' && inputs.post-version-command != ''
+      shell: bash
+      run: ${{ inputs.post-version-command }}
 
     - name: Generate PR body
       if: steps.check.outputs.hasChangelogs == 'true'

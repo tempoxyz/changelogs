@@ -208,6 +208,16 @@ jobs:
 1. **If changelogs exist** → Creates/updates a "Version Packages" PR
 2. **If no changelogs** (PR was just merged) → Publishes unpublished packages to crates.io
 
+### Post-Version Command
+
+Use `post-version-command` to run a command after version bumps but before the PR is created (e.g. refreshing lockfiles):
+
+```yaml
+- uses: wevm/changelogs@master
+  with:
+    post-version-command: 'cargo metadata --format-version=1 > /dev/null'
+```
+
 ### Action Inputs
 
 | Input | Description | Default |
@@ -215,6 +225,7 @@ jobs:
 | `branch` | Branch name for the version PR | `changelog-release/main` |
 | `commit` | Commit message for version bump | `Version Packages` |
 | `conventional-commit` | Use conventional commit format | `false` |
+| `post-version-command` | Command to run after version bumps but before PR creation | - |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
 
