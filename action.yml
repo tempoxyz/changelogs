@@ -304,9 +304,29 @@ runs:
             ' "$changelog_file")
           fi
           
+          # Find previous tag with the same package prefix for accurate changelog diff
+          previous_tag=""
+          if [[ "$tag" == *"@"* ]]; then
+            prefix="${tag%@*}@"
+            # Pick the next-lower version after current tag, with grep fallback
+            previous_tag=$(git tag --list "${prefix}*" --sort=-version:refname | awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}')
+            if [ -z "$previous_tag" ]; then
+              previous_tag=$(git tag --list "${prefix}*" --sort=-version:refname | grep -Fxv -- "$tag" | head -1)
+            fi
+          else
+            previous_tag=$(git tag --list "v*" --sort=-version:refname | awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}')
+            if [ -z "$previous_tag" ]; then
+              previous_tag=$(git tag --list "v*" --sort=-version:refname | grep -Fxv -- "$tag" | head -1)
+            fi
+          fi
+          
           # Generate GitHub's notes to get "New Contributors" and "Full Changelog"
+          generate_notes_args=(-f tag_name="$tag")
+          if [ -n "$previous_tag" ]; then
+            generate_notes_args+=(-f previous_tag_name="$previous_tag")
+          fi
           github_notes=$(gh api repos/${{ github.repository }}/releases/generate-notes \
-            -f tag_name="$tag" \
+            "${generate_notes_args[@]}" \
             --jq '.body' 2>/dev/null || echo "")
           
           # Remove "What's Changed" section, keep "New Contributors" and "Full Changelog"
@@ -318,6 +338,11 @@ runs:
             !skip { print }
           ')
           
+          # For first-ever per-crate release, skip GitHub extras (no meaningful diff)
+          if [[ "$tag" == *"@"* ]] && [ -z "$previous_tag" ]; then
+            github_extras=""
+          fi
+          
           # Combine: changelog content + GitHub extras (New Contributors, Full Changelog)
           if [ -n "$changelog_notes" ]; then
             notes="$changelog_notes"
@@ -325,7 +350,9 @@ runs:
               notes="$notes"$'\n\n'"$github_extras"
             fi
             echo "$notes" | gh release create "$tag" --notes-file - || true
+          elif [ -n "$github_notes" ]; then
+            echo "$github_notes" | gh release create "$tag" --notes-file - || true
           else
-            gh release create "$tag" --generate-notes || true
+            gh release create "$tag" --notes "" || true
           fi
         done
