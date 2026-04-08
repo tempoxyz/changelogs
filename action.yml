@@ -31,6 +31,10 @@ inputs:
     description: 'Branch name for the version PR'
     required: false
     default: 'changelog-release/main'
+  version-only:
+    description: 'Only run version bumps without creating a PR or publishing. Useful when you need to run post-version commands (e.g. refreshing lockfiles) before creating the PR yourself.'
+    required: false
+    default: 'false'
   github-token:
     description: 'GitHub token for creating PRs'
     required: false
@@ -160,7 +164,7 @@ runs:
         fi
 
     - name: Generate PR body
-      if: steps.check.outputs.hasChangelogs == 'true'
+      if: steps.check.outputs.hasChangelogs == 'true' && inputs.version-only != 'true'
       id: body
       shell: bash
       run: |
@@ -181,7 +185,7 @@ runs:
         echo "body-file=/tmp/pr-body.md" >> $GITHUB_OUTPUT
 
     - name: Create or update PR
-      if: steps.check.outputs.hasChangelogs == 'true'
+      if: steps.check.outputs.hasChangelogs == 'true' && inputs.version-only != 'true'
       id: pr
       uses: peter-evans/create-pull-request@v7
       with:
@@ -196,14 +200,14 @@ runs:
     # Publish mode: Publish when no changelogs (PR was just merged)
     # Will publish to registry if tokens provided, otherwise just creates git tags
     - name: Setup Git user for tags
-      if: steps.check.outputs.hasChangelogs == 'false'
+      if: steps.check.outputs.hasChangelogs == 'false' && inputs.version-only != 'true'
       shell: bash
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
     - name: Publish packages
-      if: steps.check.outputs.hasChangelogs == 'false'
+      if: steps.check.outputs.hasChangelogs == 'false' && inputs.version-only != 'true'
       id: publish
       shell: bash
       env:
@@ -236,12 +240,12 @@ runs:
         fi
 
     - name: Push git tags
-      if: steps.check.outputs.hasChangelogs == 'false' && steps.publish.outcome == 'success'
+      if: steps.check.outputs.hasChangelogs == 'false' && inputs.version-only != 'true' && steps.publish.outcome == 'success'
       shell: bash
       run: git push --follow-tags
 
     - name: Create GitHub releases
-      if: steps.check.outputs.hasChangelogs == 'false' && steps.publish.outcome == 'success'
+      if: steps.check.outputs.hasChangelogs == 'false' && inputs.version-only != 'true' && steps.publish.outcome == 'success'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}

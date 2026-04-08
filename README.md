@@ -208,6 +208,43 @@ jobs:
 1. **If changelogs exist** → Creates/updates a "Version Packages" PR
 2. **If no changelogs** (PR was just merged) → Publishes unpublished packages to crates.io
 
+### Version-Only Mode
+
+Use `version-only: true` when you need to run post-version commands (e.g. refreshing lockfiles) before creating the PR yourself:
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Run changelogs version only (no PR, no publish)
+      - uses: wevm/changelogs@master
+        id: changelogs
+        with:
+          version-only: true
+
+      # Post-version: refresh Cargo.lock
+      - run: cargo metadata --format-version=1 > /dev/null
+        if: steps.changelogs.outputs.hasChangelogs == 'true'
+
+      # Create the PR yourself with the updated lockfile
+      - uses: peter-evans/create-pull-request@v7
+        if: steps.changelogs.outputs.hasChangelogs == 'true'
+        with:
+          branch: changelog-release/main
+          title: 'Release'
+          commit-message: 'Version Packages'
+          delete-branch: true
+```
+
 ### Action Inputs
 
 | Input | Description | Default |
@@ -215,6 +252,7 @@ jobs:
 | `branch` | Branch name for the version PR | `changelog-release/main` |
 | `commit` | Commit message for version bump | `Version Packages` |
 | `conventional-commit` | Use conventional commit format | `false` |
+| `version-only` | Only run version bumps without creating a PR or publishing | `false` |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
 
