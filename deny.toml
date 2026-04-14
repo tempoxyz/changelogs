@@ -1,0 +1,7 @@
+[advisories]
+unmaintained = "workspace"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []
