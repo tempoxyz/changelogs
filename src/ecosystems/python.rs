@@ -14,7 +14,7 @@ impl EcosystemAdapter for PythonAdapter {
         Ecosystem::Python
     }
 
-    fn discover(root: &Path) -> Result<Vec<Package>> {
+    fn discover(root: &Path, _skip_dep_resolution: bool) -> Result<Vec<Package>> {
         let pyproject_path = root.join("pyproject.toml");
 
         if !pyproject_path.exists() {
@@ -565,7 +565,7 @@ dependencies = ["requests>=2.0"]
 "#,
         );
 
-        let packages = PythonAdapter::discover(tmp.path()).unwrap();
+        let packages = PythonAdapter::discover(tmp.path(), false).unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, "my-package");
         assert_eq!(packages[0].version.to_string(), "1.2.3");
@@ -575,7 +575,7 @@ dependencies = ["requests>=2.0"]
     #[test]
     fn discover_missing_pyproject() {
         let tmp = TempDir::new().unwrap();
-        let result = PythonAdapter::discover(tmp.path());
+        let result = PythonAdapter::discover(tmp.path(), false);
         assert!(result.is_err());
         assert!(
             result
@@ -597,7 +597,7 @@ build-backend = "hatchling.build"
 "#,
         );
 
-        let result = PythonAdapter::discover(tmp.path());
+        let result = PythonAdapter::discover(tmp.path(), false);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("[project]") || err.contains("[tool.poetry]"));
@@ -615,7 +615,7 @@ dynamic = ["version"]
 "#,
         );
 
-        let result = PythonAdapter::discover(tmp.path());
+        let result = PythonAdapter::discover(tmp.path(), false);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Dynamic"));
     }
@@ -631,7 +631,7 @@ name = "my-package"
 "#,
         );
 
-        let result = PythonAdapter::discover(tmp.path());
+        let result = PythonAdapter::discover(tmp.path(), false);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         // Falls through to error about missing [project] or [tool.poetry] with valid version
@@ -816,7 +816,7 @@ click = "^8.0"
 "#,
         );
 
-        let packages = PythonAdapter::discover(tmp.path()).unwrap();
+        let packages = PythonAdapter::discover(tmp.path(), false).unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, "poetry-pkg");
         assert_eq!(packages[0].version.to_string(), "0.5.0");
@@ -845,7 +845,7 @@ black = "^23.0"
 "#,
         );
 
-        let packages = PythonAdapter::discover(tmp.path()).unwrap();
+        let packages = PythonAdapter::discover(tmp.path(), false).unwrap();
         assert_eq!(packages.len(), 1);
         assert!(packages[0].dependencies.contains(&"requests".to_string()));
         assert!(packages[0].dependencies.contains(&"pytest".to_string()));
@@ -894,7 +894,7 @@ version = "2.0.0"
 "#,
         );
 
-        let packages = PythonAdapter::discover(tmp.path()).unwrap();
+        let packages = PythonAdapter::discover(tmp.path(), false).unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, "pep621-pkg");
         assert_eq!(packages[0].version.to_string(), "1.0.0");
@@ -911,7 +911,7 @@ name = "test-pkg"
 version = "1.0.0"
 "#,
         );
-        let pkg = &PythonAdapter::discover(tmp.path()).unwrap()[0];
+        let pkg = &PythonAdapter::discover(tmp.path(), false).unwrap()[0];
         let result = PythonAdapter::publish(pkg, true, None).unwrap();
         assert_eq!(result, PublishResult::Success);
     }
@@ -927,7 +927,7 @@ name = "test-pkg"
 version = "1.0.0"
 "#,
         );
-        let pkg = &PythonAdapter::discover(tmp.path()).unwrap()[0];
+        let pkg = &PythonAdapter::discover(tmp.path(), false).unwrap()[0];
         // Ensure tokens are not set
         // SAFETY: test-only, no concurrent access to these env vars
         unsafe {

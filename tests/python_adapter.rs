@@ -17,7 +17,7 @@ fn create_pyproject(dir: &std::path::Path, content: &str) {
 #[test]
 fn test_python_discover() {
     let root = fixture_path("python-simple");
-    let packages = PythonAdapter::discover(&root).unwrap();
+    let packages = PythonAdapter::discover(&root, false).unwrap();
 
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].name, "my-package");
@@ -74,7 +74,7 @@ build-backend = "hatchling.build"
 "#;
     std::fs::write(&pyproject_path, content).unwrap();
 
-    let result = PythonAdapter::discover(temp_dir.path());
+    let result = PythonAdapter::discover(temp_dir.path(), false);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Dynamic versions"));
@@ -91,7 +91,7 @@ build-backend = "hatchling.build"
 "#;
     std::fs::write(&pyproject_path, content).unwrap();
 
-    let result = PythonAdapter::discover(temp_dir.path());
+    let result = PythonAdapter::discover(temp_dir.path(), false);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.to_string().contains("[project]"));
@@ -230,7 +230,7 @@ dependencies = [
 "#,
     );
 
-    let packages = PythonAdapter::discover(temp_dir.path()).unwrap();
+    let packages = PythonAdapter::discover(temp_dir.path(), false).unwrap();
     let deps = &packages[0].dependencies;
 
     assert!(deps.contains(&"foo-bar".to_string()));
@@ -285,7 +285,7 @@ pytest = "^7.0"
 "#,
     );
 
-    let packages = PythonAdapter::discover(temp_dir.path()).unwrap();
+    let packages = PythonAdapter::discover(temp_dir.path(), false).unwrap();
 
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].name, "poetry-package");
@@ -342,7 +342,7 @@ version = "2.0.0"
 "#,
     );
 
-    let packages = PythonAdapter::discover(temp_dir.path()).unwrap();
+    let packages = PythonAdapter::discover(temp_dir.path(), false).unwrap();
 
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].name, "pep621-package");

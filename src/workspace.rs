@@ -22,12 +22,13 @@ impl Workspace {
     pub fn discover_with_ecosystem(ecosystem: Option<Ecosystem>) -> Result<Self> {
         let cwd = std::env::current_dir()?;
 
+        let explicit = ecosystem.is_some();
         let ecosystem = ecosystem
             .or_else(|| ecosystems::detect_ecosystem(&cwd))
             .ok_or(Error::NotInWorkspace)?;
 
         let root = Self::find_root(&cwd, ecosystem)?;
-        let packages = ecosystems::discover_packages(ecosystem, &root)?;
+        let packages = ecosystems::discover_packages(ecosystem, &root, explicit)?;
 
         if packages.is_empty() {
             return Err(Error::NotInWorkspace);

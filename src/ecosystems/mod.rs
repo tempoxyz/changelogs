@@ -91,7 +91,7 @@ pub trait EcosystemAdapter {
         Self: Sized;
 
     /// Discovers packages in the given root directory.
-    fn discover(root: &Path) -> Result<Vec<Package>>
+    fn discover(root: &Path, skip_dep_resolution: bool) -> Result<Vec<Package>>
     where
         Self: Sized;
 
@@ -151,10 +151,14 @@ pub fn detect_ecosystem(start: &Path) -> Option<Ecosystem> {
     }
 }
 
-pub fn discover_packages(ecosystem: Ecosystem, root: &Path) -> Result<Vec<Package>> {
+pub fn discover_packages(
+    ecosystem: Ecosystem,
+    root: &Path,
+    skip_dep_resolution: bool,
+) -> Result<Vec<Package>> {
     match ecosystem {
-        Ecosystem::Rust => RustAdapter::discover(root),
-        Ecosystem::Python => PythonAdapter::discover(root),
+        Ecosystem::Rust => RustAdapter::discover(root, skip_dep_resolution),
+        Ecosystem::Python => PythonAdapter::discover(root, skip_dep_resolution),
     }
 }
 
