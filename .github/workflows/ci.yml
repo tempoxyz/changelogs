@@ -27,6 +27,12 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace -- -D warnings
 
+  deny:
+    name: Deny
+    uses: tempoxyz/ci/.github/workflows/deny.yml@268b3ce142717ff86c58fbbcc3abc3f109f0fb8d # main
+    permissions:
+      contents: read
+
   test:
     name: Test
     runs-on: ubuntu-latest
