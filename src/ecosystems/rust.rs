@@ -15,7 +15,7 @@ impl EcosystemAdapter for RustAdapter {
     }
 
     fn discover(root: &Path) -> Result<Vec<Package>> {
-        let metadata = MetadataCommand::new().current_dir(root).exec()?;
+        let metadata = MetadataCommand::new().no_deps().current_dir(root).exec()?;
 
         let workspace_members: std::collections::HashSet<_> =
             metadata.workspace_members.iter().collect();
