@@ -15,6 +15,8 @@ impl EcosystemAdapter for RustAdapter {
     }
 
     fn discover(root: &Path) -> Result<Vec<Package>> {
+        // Skip dependency resolution — we only need workspace member info (names, versions, paths).
+        // Full resolution tries to fetch git sources which fails in CI without a cargo cache.
         let metadata = MetadataCommand::new().no_deps().current_dir(root).exec()?;
 
         let workspace_members: std::collections::HashSet<_> =
