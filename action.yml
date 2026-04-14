@@ -278,6 +278,18 @@ runs:
                 break
               fi
             done
+            # Fallback: try stripping first prefix (e.g., "tempo-alloy" -> "alloy")
+            if [ -z "$changelog_file" ]; then
+              stripped="${pkg_name#*-}"
+              if [ "$stripped" != "$pkg_name" ]; then
+                for dir in "crates/$stripped" "packages/$stripped" "$stripped"; do
+                  if [ -f "$dir/CHANGELOG.md" ]; then
+                    changelog_file="$dir/CHANGELOG.md"
+                    break
+                  fi
+                done
+              fi
+            fi
           fi
           # Fall back to root CHANGELOG.md
           if [ -z "$changelog_file" ] && [ -f "CHANGELOG.md" ]; then
@@ -294,11 +306,19 @@ runs:
               version="$tag"
             fi
             
-            changelog_notes=$(awk -v ver="$version" '
-              BEGIN { printing=0 }
+            changelog_notes=$(awk -v ver="$version" -v tag="$tag" '
+              BEGIN {
+                printing=0
+                root_prefix="## " ver
+                tag_prefix="## `" tag "`"
+              }
               /^## / {
                 if (printing) exit
-                if ($0 ~ "^## " ver "[ (]") { printing=1; next }
+                if (index($0, tag_prefix) == 1) { printing=1; next }
+                if (index($0, root_prefix) == 1) {
+                  c = substr($0, length(root_prefix) + 1, 1)
+                  if (c == " " || c == "(" || c == "") { printing=1; next }
+                }
               }
               printing { print }
             ' "$changelog_file")
