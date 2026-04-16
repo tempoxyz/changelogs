@@ -363,16 +363,22 @@ runs:
             github_extras=""
           fi
           
+          # Only v* tags should be marked as latest release
+          LATEST_FLAG=""
+          if [[ "$tag" != v* ]]; then
+            LATEST_FLAG="--latest=false"
+          fi
+          
           # Combine: changelog content + GitHub extras (New Contributors, Full Changelog)
           if [ -n "$changelog_notes" ]; then
             notes="$changelog_notes"
             if [ -n "$github_extras" ]; then
               notes="$notes"$'\n\n'"$github_extras"
             fi
-            echo "$notes" | gh release create "$tag" --notes-file - || true
+            echo "$notes" | gh release create "$tag" $LATEST_FLAG --notes-file - || true
           elif [ -n "$github_notes" ]; then
-            echo "$github_notes" | gh release create "$tag" --notes-file - || true
+            echo "$github_notes" | gh release create "$tag" $LATEST_FLAG --notes-file - || true
           else
-            gh release create "$tag" --notes "" || true
+            gh release create "$tag" $LATEST_FLAG --notes "" || true
           fi
         done
