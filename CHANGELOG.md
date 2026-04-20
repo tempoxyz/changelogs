@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.4 (2026-04-14)
+
+### Patch Changes
+
+- Fixed changelog directory lookup to support hyphenated package names by stripping the first prefix segment as a fallback (e.g., `tempo-alloy` -> `alloy`). Also improved release notes extraction to match both backtick-wrapped tag headings and plain version headings. (by @DerekCofausper, [#87](https://github.com/tempoxyz/changelogs/pull/87))
+
 ## 0.6.3 (2026-03-18)
 
 ### Patch Changes
