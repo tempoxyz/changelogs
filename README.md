@@ -129,6 +129,35 @@ Added new feature X that does Y.
 Fixed bug Z in the parser.
 ```
 
+## Custom AI Instructions
+
+Override the default AI prompt by placing an `instructions.md` file in your `.changelog/` directory:
+
+`.changelog/instructions.md`:
+
+The file contents are used as the prompt template. Use `{packages}` and `{diff}` as placeholders:
+
+```markdown
+Generate a changelog entry for this diff.
+
+Available packages: {packages}
+
+---
+<package-name>: patch
+---
+
+Description.
+
+Version rules:
+- "major": any removal or rename of public API
+- "minor": new features
+- "patch": bug fixes, internal changes
+
+{diff}
+```
+
+Priority: `--instructions` flag > `.changelog/instructions.md` > built-in default.
+
 ## Supported AI Providers
 
 The `--ai` flag and GitHub Action `ai` input accept any CLI command that reads from stdin and outputs text. The diff is piped to the command, and the output becomes the changelog entry.
