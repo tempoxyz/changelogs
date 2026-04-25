@@ -29,7 +29,7 @@ serde_yaml = "0.9"
 semver = { version = "1", features = ["serde"] }
 
 # Cargo/workspace
-cargo_metadata = "0.19"
+cargo_metadata = "0.20"
 
 # Graph
 petgraph = "0.7"
