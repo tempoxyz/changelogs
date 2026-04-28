@@ -21,7 +21,7 @@ console = "0.15"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "1.1"
 toml_edit = "0.22"
 serde_yaml = "0.9"
 
