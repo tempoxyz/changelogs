@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.5 (2026-04-25)
+
+### Patch Changes
+
+- Update rustls-webpki 0.103.11 → 0.103.13 to fix RUSTSEC-2026-0098, RUSTSEC-2026-0099, RUSTSEC-2026-0104. (by @grandizzy, [#107](https://github.com/tempoxyz/changelogs/pull/107))
+
 ## 0.6.4 (2026-04-14)
 
 ### Patch Changes
