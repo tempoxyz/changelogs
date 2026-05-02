@@ -355,8 +355,8 @@ fn check_proxy_published(module_path: &str, version: &Version) -> Result<bool> {
     let url = format!("https://proxy.golang.org/{}/@v/v{}.info", escaped, version);
     match ureq::get(&url).call() {
         Ok(_) => Ok(true),
-        Err(ureq::Error::Status(404, _)) => Ok(false),
-        Err(ureq::Error::Status(410, _)) => Ok(false),
+        Err(ureq::Error::StatusCode(404)) => Ok(false),
+        Err(ureq::Error::StatusCode(410)) => Ok(false),
         Err(e) => Err(Error::GoProxyCheckFailed(e.to_string())),
     }
 }

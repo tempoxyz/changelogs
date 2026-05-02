@@ -140,14 +140,15 @@ impl EcosystemAdapter for PythonAdapter {
         let normalized_name = Self::normalize_pep503(name);
         let url = format!("https://pypi.org/pypi/{}/json", normalized_name);
 
-        let response = match ureq::get(&url).call() {
+        let mut response = match ureq::get(&url).call() {
             Ok(resp) => resp,
-            Err(ureq::Error::Status(404, _)) => return Ok(false),
+            Err(ureq::Error::StatusCode(404)) => return Ok(false),
             Err(e) => return Err(Error::PypiCheckFailed(e.to_string())),
         };
 
         let json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| Error::PypiCheckFailed(format!("failed to parse JSON: {}", e)))?;
 
         if let Some(releases) = json.get("releases").and_then(|r| r.as_object()) {
