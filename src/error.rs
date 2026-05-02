@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(
-        "could not detect workspace. specify ecosystem with: changelogs --ecosystem <rust|python> init"
+        "could not detect workspace. specify ecosystem with: changelogs --ecosystem <rust|python|go> init"
     )]
     NotInWorkspace,
 
@@ -48,6 +48,12 @@ pub enum Error {
 
     #[error("failed to check PyPI: {0}")]
     PypiCheckFailed(String),
+
+    #[error("Go module not found: {0}")]
+    GoModuleNotFound(String),
+
+    #[error("failed to check Go module proxy: {0}")]
+    GoProxyCheckFailed(String),
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

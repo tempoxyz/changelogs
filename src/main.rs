@@ -9,7 +9,7 @@ mod cli;
 #[command(about = "Manage versioning and changelogs for workspaces")]
 #[command(version)]
 struct Cli {
-    /// Ecosystem to use (rust, python). Auto-detected if not specified.
+    /// Ecosystem to use (rust, python, go). Auto-detected if not specified.
     #[arg(short = 'e', long, global = true)]
     ecosystem: Option<Ecosystem>,
 

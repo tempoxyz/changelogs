@@ -9,7 +9,7 @@ use console::style;
 
 pub fn run(verbose: bool, ecosystem: Option<Ecosystem>) -> Result<()> {
     let workspace = Workspace::discover_with_ecosystem(ecosystem).context(
-        "could not detect workspace — specify ecosystem with: changelogs --ecosystem <rust|python>",
+        "could not detect workspace — specify ecosystem with: changelogs --ecosystem <rust|python|go>",
     )?;
 
     if !workspace.is_initialized() {
