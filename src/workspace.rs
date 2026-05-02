@@ -47,6 +47,7 @@ impl Workspace {
         let manifest_name = match ecosystem {
             Ecosystem::Rust => "Cargo.toml",
             Ecosystem::Python => "pyproject.toml",
+            Ecosystem::Go => "go.mod",
         };
 
         let mut current = start.to_path_buf();

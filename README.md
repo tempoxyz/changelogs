@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  Changelog management for Rust, Python, and TypeScript¹ workspaces.
+  Changelog management for Rust, Python, Go, and TypeScript¹ workspaces.
   <br>
   <sub>¹ TypeScript support is coming soon.</sub>
 </p>
@@ -253,6 +253,31 @@ Changelogs supports Python packages using PEP 621 `pyproject.toml` files.
 **Limitations:**
 - Single-package repos only (no Python monorepo support)
 - PEP 621 only (no `setup.py` or `setup.cfg`)
+
+### Go
+
+Changelogs supports Go modules using `go.mod` files. Go is unusual: versions
+live in **git tags**, not in the manifest. To remember the bumped version
+between the `version` and `publish` CI runs, changelogs writes it inline as a
+comment in `go.mod`:
+
+```go
+// changelogs:version 1.2.3
+module github.com/owner/repo
+```
+
+**Requirements:**
+- `go.mod` at the repository root with a `module` directive
+- Semantic versioning for git tags (`v1.2.3`)
+
+**Publishing:**
+- No registry token required — pushing the git tag publishes to `proxy.golang.org`
+- Tag format is `vX.Y.Z` (no package-name prefix)
+- Use `is_published` checks against `proxy.golang.org/<module>/@v/v<ver>.info`
+
+**Limitations:**
+- Single-module repos only (no Go monorepo / multi-`go.mod` support)
+- Major version bumps (≥ v2) do not currently rewrite the `module .../vN` suffix
 
 ## License
 

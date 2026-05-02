@@ -119,7 +119,7 @@ impl Config {
     }
 
     pub fn default_toml() -> &'static str {
-        r#"# Ecosystem: "rust" | "python" (auto-detected if not specified)
+        r#"# Ecosystem: "rust" | "python" | "go" (auto-detected if not specified)
 # ecosystem = "rust"
 
 # How to bump packages that depend on changed packages

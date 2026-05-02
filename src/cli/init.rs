@@ -7,7 +7,7 @@ use console::style;
 
 pub fn run(ecosystem: Option<Ecosystem>) -> Result<()> {
     let workspace = Workspace::discover_with_ecosystem(ecosystem)
-        .context("could not detect workspace — specify ecosystem with: changelogs --ecosystem <rust|python> init")?;
+        .context("could not detect workspace — specify ecosystem with: changelogs --ecosystem <rust|python|go> init")?;
 
     if workspace.is_initialized() {
         return Err(Error::AlreadyInitialized.into());
