@@ -106,6 +106,17 @@ impl EcosystemAdapter for GoAdapter {
     fn is_published(name: &str, version: &Version) -> Result<bool> {
         // `name` is the full module path (set in `discover`). Query the Go module
         // proxy directly so already-released versions are skipped on republish.
+        //
+        // Special case: `v0.0.0` is the implicit baseline returned by `discover`
+        // when there is no `// changelogs:version` comment in `go.mod` and no
+        // existing `vX.Y.Z` git tag — i.e. this module has never had a real
+        // release. Treat it as "already published" so the publisher does NOT
+        // bootstrap-tag `v0.0.0` on every push to the release branch. A real
+        // first release happens once a changelog entry bumps the version
+        // (e.g. to `v0.1.0`) and `is_published` queries the proxy for that.
+        if *version == Version::new(0, 0, 0) {
+            return Ok(true);
+        }
         check_proxy_published(name, version)
     }
 
@@ -586,6 +597,16 @@ mod tests {
             GoAdapter::publish(pkg, true, None).unwrap(),
             PublishResult::Success
         );
+    }
+
+    #[test]
+    fn is_published_skips_bootstrap_v0_0_0() {
+        // v0.0.0 is the implicit baseline `discover` returns when there is no
+        // version comment and no git tag. `is_published` must report it as
+        // already published so the publisher does not bootstrap-tag the repo
+        // on every push to the release branch. This case is short-circuited
+        // before any network call, so it's safe to run offline.
+        assert!(GoAdapter::is_published("github.com/foo/bar", &Version::new(0, 0, 0)).unwrap());
     }
 
     #[test]
