@@ -324,19 +324,24 @@ runs:
             ' "$changelog_file")
           fi
           
-          # Find previous tag with the same package prefix for accurate changelog diff
+          # Find previous tag with the same package prefix for accurate changelog diff.
+          # NOTE: `grep -Fxv` exits 1 when every input line matches the excluded
+          # pattern (i.e. when the only tag is `$tag` itself), and under
+          # `set -e -o pipefail` that aborts the whole "Create GitHub releases"
+          # step before any release is created. The `|| true` after each grep
+          # pipeline degrades that case to "no previous tag" instead of failing.
           previous_tag=""
           if [[ "$tag" == *"@"* ]]; then
             prefix="${tag%@*}@"
             # Pick the next-lower version after current tag, with grep fallback
             previous_tag=$(git tag --list "${prefix}*" --sort=-version:refname | awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}')
             if [ -z "$previous_tag" ]; then
-              previous_tag=$(git tag --list "${prefix}*" --sort=-version:refname | grep -Fxv -- "$tag" | head -1)
+              previous_tag=$(git tag --list "${prefix}*" --sort=-version:refname | { grep -Fxv -- "$tag" || true; } | head -1)
             fi
           else
             previous_tag=$(git tag --list "v*" --sort=-version:refname | awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}')
             if [ -z "$previous_tag" ]; then
-              previous_tag=$(git tag --list "v*" --sort=-version:refname | grep -Fxv -- "$tag" | head -1)
+              previous_tag=$(git tag --list "v*" --sort=-version:refname | { grep -Fxv -- "$tag" || true; } | head -1)
             fi
           fi
           
