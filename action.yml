@@ -56,14 +56,17 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # Also run when OIDC is available so auto-detected Python repos using
+    # Trusted Publishing (no `ecosystem: python`, no `pypi-token`) still get
+    # build/twine installed.
     - name: Setup Python (for Python ecosystem)
-      if: inputs.ecosystem == 'python' || inputs.pypi-token != ''
+      if: inputs.ecosystem == 'python' || inputs.pypi-token != '' || env.ACTIONS_ID_TOKEN_REQUEST_TOKEN != ''
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
         python-version: ${{ inputs.python-version }}
 
     - name: Install Python build tools (for Python ecosystem)
-      if: inputs.ecosystem == 'python' || inputs.pypi-token != ''
+      if: inputs.ecosystem == 'python' || inputs.pypi-token != '' || env.ACTIONS_ID_TOKEN_REQUEST_TOKEN != ''
       shell: bash
       run: pip install build==1.2.2.post1 twine==6.2.0
 
@@ -218,10 +221,12 @@ runs:
     #      API token by exchanging the GitHub OIDC ID token at PyPI's
     #      `_/oidc/mint-token` endpoint. Requires a configured Trusted
     #      Publisher on the PyPI project that matches the workflow.
+    # Run unconditionally on the publish path so it works with the documented
+    # ecosystem auto-detection (no `ecosystem: python` set) when using OIDC
+    # trusted publishing. Setting TWINE_PASSWORD is a no-op for non-Python
+    # publishes.
     - name: Configure PyPI auth
-      if: |
-        steps.check.outputs.hasChangelogs == 'false' &&
-        (inputs.ecosystem == 'python' || inputs.pypi-token != '')
+      if: steps.check.outputs.hasChangelogs == 'false'
       shell: bash
       env:
         PYPI_TOKEN_INPUT: ${{ inputs.pypi-token }}
