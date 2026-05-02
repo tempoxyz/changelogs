@@ -261,7 +261,15 @@ fn run_ai_generation(
         diff_to_use
     };
 
-    let template = instructions.unwrap_or(DEFAULT_INSTRUCTIONS);
+    let instructions_file = workspace.changelog_dir().join("instructions.md");
+    let file_instructions = if instructions.is_none() && instructions_file.exists() {
+        std::fs::read_to_string(&instructions_file).ok()
+    } else {
+        None
+    };
+    let template = instructions
+        .or(file_instructions.as_deref())
+        .unwrap_or(DEFAULT_INSTRUCTIONS);
     let prompt = template
         .replace("{packages}", &package_names)
         .replace("{diff}", &diff_to_use);
