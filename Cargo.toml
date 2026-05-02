@@ -17,34 +17,34 @@ path = "src/main.rs"
 # CLI
 clap = { version = "4", features = ["derive"] }
 inquire = { version = "0.9", features = ["editor"] }
-console = "0.15"
+console = "0.16"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-toml_edit = "0.22"
+toml = "1.1"
+toml_edit = "0.25"
 serde_yaml = "0.9"
 
 # Versioning
 semver = { version = "1", features = ["serde"] }
 
 # Cargo/workspace
-cargo_metadata = "0.19"
+cargo_metadata = "0.20"
 
 # Graph
-petgraph = "0.7"
+petgraph = "0.8"
 
 # Errors
 thiserror = "2"
 anyhow = "1"
 
 # Utils
-rand = "0.9"
+rand = "0.10"
 chrono = "0.4"
 regex = "1"
 
 # HTTP (for PyPI API)
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 serde_json = "1"
 
 [dev-dependencies]
