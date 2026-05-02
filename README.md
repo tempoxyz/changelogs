@@ -283,6 +283,48 @@ Changelogs supports Python packages using PEP 621 `pyproject.toml` files.
 - Single-package repos only (no Python monorepo support)
 - PEP 621 only (no `setup.py` or `setup.cfg`)
 
+**Authentication:**
+
+You can authenticate to PyPI with either a static API token or [Trusted
+Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC). The action picks
+OIDC automatically when `pypi-token` is empty and the workflow has
+`id-token: write`.
+
+Static API token:
+
+```yaml
+- uses: wevm/changelogs@master
+  with:
+    ecosystem: python
+    pypi-token: ${{ secrets.PYPI_API_TOKEN }}
+```
+
+Trusted Publishing (recommended — no long-lived secrets):
+
+```yaml
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write   # required for OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+      - uses: wevm/changelogs@master
+        with:
+          ecosystem: python
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+You also need to register a Trusted Publisher on PyPI under the project's
+**Publishing** settings. The repository, workflow filename, and (optionally)
+environment must match the workflow above.
+
 ### Go
 
 Changelogs supports Go modules using `go.mod` files. Go is unusual: versions

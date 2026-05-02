@@ -56,14 +56,17 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # Also run when OIDC is available so auto-detected Python repos using
+    # Trusted Publishing (no `ecosystem: python`, no `pypi-token`) still get
+    # build/twine installed.
     - name: Setup Python (for Python ecosystem)
-      if: inputs.ecosystem == 'python' || inputs.pypi-token != ''
+      if: inputs.ecosystem == 'python' || inputs.pypi-token != '' || env.ACTIONS_ID_TOKEN_REQUEST_TOKEN != ''
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
         python-version: ${{ inputs.python-version }}
 
     - name: Install Python build tools (for Python ecosystem)
-      if: inputs.ecosystem == 'python' || inputs.pypi-token != ''
+      if: inputs.ecosystem == 'python' || inputs.pypi-token != '' || env.ACTIONS_ID_TOKEN_REQUEST_TOKEN != ''
       shell: bash
       run: pip install build==1.2.2.post1 twine==6.2.0
 
@@ -210,6 +213,55 @@ runs:
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+    # Configure PyPI authentication for the publish step that follows.
+    # Two modes:
+    #   1. Static API token: `pypi-token` input is set -> use it directly.
+    #   2. OIDC trusted publishing: `pypi-token` is empty AND the workflow
+    #      has `permissions: id-token: write` -> mint a short-lived PyPI
+    #      API token by exchanging the GitHub OIDC ID token at PyPI's
+    #      `_/oidc/mint-token` endpoint. Requires a configured Trusted
+    #      Publisher on the PyPI project that matches the workflow.
+    # Run unconditionally on the publish path so it works with the documented
+    # ecosystem auto-detection (no `ecosystem: python` set) when using OIDC
+    # trusted publishing. Setting TWINE_PASSWORD is a no-op for non-Python
+    # publishes.
+    - name: Configure PyPI auth
+      if: steps.check.outputs.hasChangelogs == 'false'
+      shell: bash
+      env:
+        PYPI_TOKEN_INPUT: ${{ inputs.pypi-token }}
+      run: |
+        if [ -n "$PYPI_TOKEN_INPUT" ]; then
+          echo "::add-mask::$PYPI_TOKEN_INPUT"
+          echo "TWINE_PASSWORD=$PYPI_TOKEN_INPUT" >> "$GITHUB_ENV"
+          echo "Using static PyPI API token from pypi-token input"
+        elif [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          echo "Minting PyPI API token via OIDC trusted publishing..."
+          oidc_resp=$(curl -sSL --fail \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=pypi")
+          oidc_token=$(echo "$oidc_resp" | jq -r .value)
+          if [ -z "$oidc_token" ] || [ "$oidc_token" = "null" ]; then
+            echo "::error::Failed to obtain GitHub OIDC ID token for PyPI trusted publishing"
+            exit 1
+          fi
+          mint_resp=$(curl -sSL -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"token\":\"$oidc_token\"}" \
+            https://pypi.org/_/oidc/mint-token)
+          api_token=$(echo "$mint_resp" | jq -r .token)
+          if [ -z "$api_token" ] || [ "$api_token" = "null" ]; then
+            echo "::error::PyPI rejected OIDC token. Check that a Trusted Publisher is configured for this project, repo, workflow filename, and environment."
+            echo "Response: $mint_resp"
+            exit 1
+          fi
+          echo "::add-mask::$api_token"
+          echo "TWINE_PASSWORD=$api_token" >> "$GITHUB_ENV"
+          echo "Minted short-lived PyPI API token via OIDC"
+        else
+          echo "No pypi-token input and no OIDC available (workflow needs 'permissions: id-token: write'). Publish will skip with 'no token'."
+        fi
+
     - name: Publish packages
       if: steps.check.outputs.hasChangelogs == 'false'
       id: publish
@@ -217,7 +269,8 @@ runs:
       env:
         CARGO_REGISTRY_TOKEN: ${{ inputs.crate-token }}
         TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ inputs.pypi-token }}
+        # TWINE_PASSWORD is set via $GITHUB_ENV by the "Configure PyPI auth" step
+        # (either from inputs.pypi-token or minted via OIDC trusted publishing).
       run: |
         export PATH="$HOME/.local/bin:$PATH"
         ECOSYSTEM_FLAG=""
