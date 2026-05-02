@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0 (2026-05-02)
+
+### Minor Changes
+
+- Added support for a `.changelog/instructions.md` file to override the default AI prompt, with priority order: `--instructions` flag > `.changelog/instructions.md` > built-in default. Updated README with documentation for this feature. (by @DerekCofausper, [#67](https://github.com/tempoxyz/changelogs/pull/67))
+
+### Patch Changes
+
+- Two release-mode fixes:
+- **Go ecosystem.** `is_published` now treats `v0.0.0` as already published, so a Go module with no prior `vX.Y.Z` tag and no staged changelog entries does not get bootstrap-tagged on every push to the release branch. The previous behavior unconditionally created and pushed a `v0.0.0` tag the first time the release workflow ran on an integrated repo.
+- **GitHub Action.** The "Create GitHub releases" step's previous-tag lookup uses `git tag --list … | grep -Fxv -- "$tag" | head -1`. `grep -Fxv` exits 1 when every input line matches the excluded pattern (i.e. when the only tag is `$tag` itself), and under `set -e -o pipefail` that aborted the whole step before any release was created. Both occurrences are now guarded with `{ grep -Fxv … || true; }`, so the lookup degrades to "no previous tag" instead of failing the step. (by @BrendanRyan, [#111](https://github.com/tempoxyz/changelogs/pull/111))
+- Added Go module ecosystem support. Discovers single-module Go projects via `go.mod`, persists the bumped version inline as a `// changelogs:version X.Y.Z` comment between the version and publish CI runs, edits `require` blocks for dependency updates, queries `proxy.golang.org` for published-version checks, and emits `vX.Y.Z` git tags. Auto-detection (`go.mod` at the repository root) and the `go` / `golang` ecosystem aliases are wired through. (by @BrendanRyan, [#109](https://github.com/tempoxyz/changelogs/pull/109))
+
 ## 0.6.5 (2026-04-25)
 
 ### Patch Changes
