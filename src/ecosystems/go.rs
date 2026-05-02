@@ -46,8 +46,11 @@ impl EcosystemAdapter for GoAdapter {
             ))
         })?;
 
-        // Package name = last segment of the module path, stripped of any /vN suffix.
-        let name = derive_package_name(&module_path);
+        // Use the full module path as the package name. In Go the import path *is*
+        // the canonical identifier, and we need it intact so `is_published` can
+        // query the module proxy. Users reference packages by this path in
+        // changelog frontmatter (e.g. `github.com/owner/repo: minor`).
+        let name = module_path;
 
         // Read version from comment first; fall back to latest matching git tag; else 0.0.0.
         let version = read_version_from_content(&content)
@@ -101,14 +104,8 @@ impl EcosystemAdapter for GoAdapter {
     }
 
     fn is_published(name: &str, version: &Version) -> Result<bool> {
-        // The `name` we receive is the bare package name (e.g. `tempo-go`); to query
-        // the Go module proxy we need the full module path. Without that path here we
-        // optimistically return false so a tag will be created. Callers that need a
-        // strict published-check should pass the full module path as the package name.
-        // We still try the proxy if `name` looks like a module path (contains `/`).
-        if !name.contains('/') {
-            return Ok(false);
-        }
+        // `name` is the full module path (set in `discover`). Query the Go module
+        // proxy directly so already-released versions are skipped on republish.
         check_proxy_published(name, version)
     }
 
@@ -142,12 +139,6 @@ impl GoAdapter {
         }
         Ok(())
     }
-
-    /// Best-effort published check that takes the full module path. Use this when
-    /// you have it (e.g. from `parse_module_path`).
-    pub fn is_module_published(module_path: &str, version: &Version) -> Result<bool> {
-        check_proxy_published(module_path, version)
-    }
 }
 
 // -- helpers --------------------------------------------------------------
@@ -165,18 +156,6 @@ fn parse_module_path(go_mod: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn derive_package_name(module_path: &str) -> String {
-    // For `github.com/foo/bar/v2` we want `bar`, not `v2`.
-    let segments: Vec<&str> = module_path.split('/').collect();
-    let last = segments.last().copied().unwrap_or(module_path);
-    let is_major_suffix =
-        last.starts_with('v') && last.len() > 1 && last[1..].chars().all(|c| c.is_ascii_digit());
-    if is_major_suffix && segments.len() >= 2 {
-        return segments[segments.len() - 2].to_string();
-    }
-    last.to_string()
 }
 
 fn read_version_from_content(content: &str) -> Option<Version> {
@@ -425,14 +404,6 @@ mod tests {
     }
 
     #[test]
-    fn derive_name_strips_major_version_suffix() {
-        assert_eq!(derive_package_name("github.com/foo/bar"), "bar");
-        assert_eq!(derive_package_name("github.com/foo/bar/v2"), "bar");
-        assert_eq!(derive_package_name("github.com/foo/bar/v10"), "bar");
-        assert_eq!(derive_package_name("example.com/single"), "single");
-    }
-
-    #[test]
     fn read_version_from_comment() {
         let content = "// changelogs:version 1.2.3\nmodule github.com/foo/bar\n";
         assert_eq!(
@@ -539,7 +510,7 @@ mod tests {
         );
         let pkgs = GoAdapter::discover(tmp.path()).unwrap();
         assert_eq!(pkgs.len(), 1);
-        assert_eq!(pkgs[0].name, "bar");
+        assert_eq!(pkgs[0].name, "github.com/foo/bar");
         assert_eq!(pkgs[0].version, Version::new(0, 7, 0));
     }
 
@@ -620,7 +591,7 @@ mod tests {
     #[test]
     fn tag_name_format_for_go() {
         let pkg = Package {
-            name: "bar".to_string(),
+            name: "github.com/foo/bar".to_string(),
             version: Version::new(1, 2, 3),
             path: PathBuf::from("/tmp/bar"),
             manifest_path: PathBuf::from("/tmp/bar/go.mod"),
@@ -639,13 +610,6 @@ mod tests {
             escape_module_path("github.com/foo/bar"),
             "github.com/foo/bar"
         );
-    }
-
-    #[test]
-    fn is_published_without_slash_returns_false() {
-        // The bare-name path returns false (caller doesn't have the module path).
-        let res = GoAdapter::is_published("bar", &Version::new(1, 0, 0)).unwrap();
-        assert!(!res);
     }
 
     #[test]

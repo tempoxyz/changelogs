@@ -16,7 +16,7 @@ fn test_go_discover_fixture() {
     let packages = GoAdapter::discover(&root).unwrap();
 
     assert_eq!(packages.len(), 1);
-    assert_eq!(packages[0].name, "widget");
+    assert_eq!(packages[0].name, "github.com/example/widget");
     assert_eq!(packages[0].version, Version::new(0, 3, 1));
     assert!(packages[0].manifest_path.ends_with("go.mod"));
     // Both required modules surface as dependencies (block form).

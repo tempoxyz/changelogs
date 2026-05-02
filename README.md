@@ -270,10 +270,19 @@ module github.com/owner/repo
 - `go.mod` at the repository root with a `module` directive
 - Semantic versioning for git tags (`v1.2.3`)
 
+**Package name:** Go uses the **full module path** as the package name (e.g.
+`github.com/owner/repo`). This is what you write in changelog frontmatter:
+
+```markdown
+---
+github.com/owner/repo: minor
+---
+```
+
 **Publishing:**
 - No registry token required — pushing the git tag publishes to `proxy.golang.org`
 - Tag format is `vX.Y.Z` (no package-name prefix)
-- Use `is_published` checks against `proxy.golang.org/<module>/@v/v<ver>.info`
+- Already-published versions are skipped via a `proxy.golang.org/<module>/@v/v<ver>.info` lookup
 
 **Limitations:**
 - Single-module repos only (no Go monorepo / multi-`go.mod` support)
