@@ -34,13 +34,13 @@ impl EcosystemAdapter for RustAdapter {
                     metadata
                         .packages
                         .iter()
-                        .find(|p| p.name == dep.name && workspace_members.contains(&p.id))
-                        .map(|p| p.name.clone())
+                        .find(|p| p.name.as_str() == dep.name && workspace_members.contains(&p.id))
+                        .map(|p| p.name.to_string())
                 })
                 .collect();
 
             packages.push(Package {
-                name: package.name.clone(),
+                name: package.name.to_string(),
                 version: package.version.clone(),
                 path: package
                     .manifest_path

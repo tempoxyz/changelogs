@@ -1,6 +1,6 @@
 use crate::BumpType;
 use crate::error::{Error, Result};
-use rand::Rng;
+use rand::RngExt;
 
 use std::path::Path;
 

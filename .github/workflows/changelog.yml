@@ -6,8 +6,12 @@ on:
 
 jobs:
   check-changelog:
-    # Skip for fork PRs - we can't write to forks and can't checkout their branches
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Skip for fork PRs - we can't write to forks and can't checkout their branches.
+    # Skip for Dependabot PRs - they don't have access to ANTHROPIC_API_KEY and dep
+    # bumps are summarized in the release PR by the changelogs action itself.
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
