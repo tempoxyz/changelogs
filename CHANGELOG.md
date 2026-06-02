@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1 (2026-06-02)
+
+### Patch Changes
+
+- Gate PyPI authentication setup to the explicit Python ecosystem so non-Python release workflows that use OIDC for their own registry do not attempt PyPI trusted publishing. (by @EmmaJamieson-Hoare, [#119](https://github.com/tempoxyz/changelogs/pull/119))
+
 ## 0.8.0 (2026-05-02)
 
 ### Minor Changes
