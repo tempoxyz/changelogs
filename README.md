@@ -288,7 +288,8 @@ Changelogs supports Python packages using PEP 621 `pyproject.toml` files.
 You can authenticate to PyPI with either a static API token or [Trusted
 Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC). The action picks
 OIDC automatically when `pypi-token` is empty and the workflow has
-`id-token: write`.
+`id-token: write`. PyPI auth setup only runs when `ecosystem: python` is set, so
+include that input for both static-token and Trusted Publishing workflows.
 
 Static API token:
 
