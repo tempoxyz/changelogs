@@ -27,6 +27,14 @@ impl EcosystemAdapter for RustAdapter {
                 continue;
             }
 
+            if package
+                .publish
+                .as_ref()
+                .is_some_and(|registries| registries.is_empty())
+            {
+                continue;
+            }
+
             let deps: Vec<String> = package
                 .dependencies
                 .iter()
@@ -530,6 +538,45 @@ my-dep = { version = \"1.0.0\" }\n";
 
         let result = RustAdapter::publish(&pkg, false, None).unwrap();
         assert_eq!(result, PublishResult::Skipped(SkipReason::NotPublishable));
+    }
+
+    #[test]
+    fn discover_skips_publish_false_workspace_members() {
+        let dir = TempDir::new().unwrap();
+        let root_manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &root_manifest,
+            r#"[package]
+name = "root-crate"
+version = "0.10.4"
+edition = "2021"
+
+[workspace]
+members = [".", "crates/internal-tool"]
+"#,
+        )
+        .unwrap();
+
+        let internal_dir = dir.path().join("crates").join("internal-tool");
+        std::fs::create_dir_all(internal_dir.join("src")).unwrap();
+        std::fs::write(
+            internal_dir.join("Cargo.toml"),
+            r#"[package]
+name = "internal-tool"
+version = "0.1.4"
+edition = "2021"
+publish = false
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("lib.rs"), "").unwrap();
+        std::fs::write(internal_dir.join("src").join("lib.rs"), "").unwrap();
+
+        let packages = RustAdapter::discover(dir.path()).unwrap();
+        let names: Vec<_> = packages.iter().map(|pkg| pkg.name.as_str()).collect();
+
+        assert_eq!(names, vec!["root-crate"]);
     }
 
     #[test]
