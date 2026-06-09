@@ -360,6 +360,41 @@ github.com/owner/repo: minor
 - Single-module repos only (no Go monorepo / multi-`go.mod` support)
 - Major version bumps (≥ v2) do not currently rewrite the `module .../vN` suffix
 
+### SwiftPM
+
+Changelogs supports Swift Package Manager packages using root `Package.swift`
+files. SwiftPM versions live in **git tags**, not in the manifest. To remember
+the bumped version between the `version` and `publish` CI runs, changelogs writes
+it inline as a comment in `Package.swift`:
+
+```swift
+// swift-tools-version: 5.10
+// changelogs:version 1.2.3
+import PackageDescription
+```
+
+**Requirements:**
+- `Package.swift` at the repository root with `Package(name: "...")`
+- Semantic versioning for git tags (`v1.2.3`)
+
+**Package name:** Swift uses the package's `Package(name:)` value as the package
+name. This is what you write in changelog frontmatter:
+
+```markdown
+---
+TempoKit: minor
+---
+```
+
+**Publishing:**
+- No registry token required — pushing the git tag publishes the SwiftPM package
+- Tag format is `vX.Y.Z` (no package-name prefix)
+
+**Limitations:**
+- Single-package repos only (no Swift package monorepo support)
+- Dependency version updates currently support `.package(url: ..., from: "...")`
+  and `.package(url: ..., exact: "...")`
+
 ## License
 
 MIT OR Apache-2.0

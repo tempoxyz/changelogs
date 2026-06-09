@@ -48,6 +48,7 @@ impl Workspace {
             Ecosystem::Rust => "Cargo.toml",
             Ecosystem::Python => "pyproject.toml",
             Ecosystem::Go => "go.mod",
+            Ecosystem::Swift => "Package.swift",
         };
 
         let mut current = start.to_path_buf();
