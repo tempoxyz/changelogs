@@ -1,6 +1,7 @@
 use changelogs::ecosystems::{Ecosystem, EcosystemAdapter, SwiftAdapter};
 use semver::Version;
 use std::path::PathBuf;
+use std::process::Command;
 use tempfile::TempDir;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -122,4 +123,37 @@ fn test_swift_alias_parsing() {
     assert_eq!(Ecosystem::from_str("swift").unwrap(), Ecosystem::Swift);
     assert_eq!(Ecosystem::from_str("swiftpm").unwrap(), Ecosystem::Swift);
     assert_eq!(Ecosystem::from_str("SPM").unwrap(), Ecosystem::Swift);
+}
+
+#[test]
+fn test_swift_is_published_checks_existing_git_tag() {
+    let tmp = TempDir::new().unwrap();
+    let previous_dir = std::env::current_dir().unwrap();
+
+    run_git(tmp.path(), &["init"]);
+    run_git(tmp.path(), &["config", "user.email", "test@example.com"]);
+    run_git(tmp.path(), &["config", "user.name", "Test User"]);
+    std::fs::write(tmp.path().join("README.md"), "test\n").unwrap();
+    run_git(tmp.path(), &["add", "README.md"]);
+    run_git(tmp.path(), &["commit", "-m", "init"]);
+    run_git(tmp.path(), &["tag", "v0.4.2"]);
+
+    std::env::set_current_dir(tmp.path()).unwrap();
+    assert!(SwiftAdapter::is_published("TempoKit", &Version::new(0, 4, 2)).unwrap());
+    assert!(!SwiftAdapter::is_published("TempoKit", &Version::new(0, 4, 3)).unwrap());
+    std::env::set_current_dir(previous_dir).unwrap();
+}
+
+fn run_git(dir: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

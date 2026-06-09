@@ -93,7 +93,11 @@ impl EcosystemAdapter for SwiftAdapter {
         // `0.0.0` is the implicit baseline when no changelogs version comment or
         // git tag exists. Treat it as already published so `publish` does not
         // create a meaningless bootstrap tag.
-        Ok(*version == Version::new(0, 0, 0))
+        if *version == Version::new(0, 0, 0) {
+            return Ok(true);
+        }
+
+        Ok(git_tag_exists(version))
     }
 
     fn publish(_pkg: &Package, _dry_run: bool, _registry: Option<&str>) -> Result<PublishResult> {
@@ -236,6 +240,22 @@ fn latest_git_tag_version(repo_dir: &Path) -> Option<Version> {
     None
 }
 
+fn git_tag_exists(version: &Version) -> bool {
+    let tag = format!("v{}", version);
+    let output = Command::new("git")
+        .args([
+            "rev-parse",
+            "--quiet",
+            "--verify",
+            &format!("refs/tags/{tag}"),
+        ])
+        .output();
+
+    output
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +304,10 @@ mod tests {
         assert!(modified);
         assert!(updated.contains(r#"swift-log.git", from: "1.6.0""#));
         assert!(updated.contains(r#"swift-collections.git", from: "1.1.0""#));
+    }
+
+    #[test]
+    fn is_published_skips_bootstrap_v0_0_0() {
+        assert!(SwiftAdapter::is_published("TempoKit", &Version::new(0, 0, 0)).unwrap());
     }
 }
