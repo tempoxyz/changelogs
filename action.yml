@@ -34,6 +34,10 @@ inputs:
   post-version-command:
     description: 'Command to run after version bumps but before PR creation (e.g. refreshing lockfiles).'
     required: false
+  publish-mode:
+    description: '"registry" (default) publishes to crates.io/PyPI when a token is provided. "tags-only" documents intent to skip registry upload and only create git tags + GitHub releases. When no crate-token or pypi-token is provided the action already behaves as tags-only automatically regardless of this setting.'
+    required: false
+    default: 'registry'
   github-token:
     description: 'GitHub token for creating PRs'
     required: false
@@ -225,7 +229,7 @@ runs:
     # also have GitHub OIDC enabled for their own registries, and must not try
     # to exchange that OIDC token with PyPI.
     - name: Configure PyPI auth
-      if: steps.check.outputs.hasChangelogs == 'false' && inputs.ecosystem == 'python'
+      if: steps.check.outputs.hasChangelogs == 'false' && inputs.ecosystem == 'python' && inputs.publish-mode != 'tags-only'
       shell: bash
       env:
         PYPI_TOKEN_INPUT: ${{ inputs.pypi-token }}
@@ -266,7 +270,7 @@ runs:
       id: publish
       shell: bash
       env:
-        CARGO_REGISTRY_TOKEN: ${{ inputs.crate-token }}
+        CARGO_REGISTRY_TOKEN: ${{ inputs.publish-mode != 'tags-only' && inputs.crate-token || '' }}
         TWINE_USERNAME: __token__
         # TWINE_PASSWORD is set via $GITHUB_ENV by the "Configure PyPI auth" step
         # (either from inputs.pypi-token or minted via OIDC trusted publishing).

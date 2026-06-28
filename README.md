@@ -257,6 +257,37 @@ Use `post-version-command` to run a command after version bumps but before the P
 | `post-version-command` | Command to run after version bumps but before PR creation | - |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
+| `publish-mode` | `"registry"` publishes to crates.io/PyPI (default). `"tags-only"` documents that registry upload is intentionally skipped; only git tags and GitHub releases are created. When no `crate-token`/`pypi-token` is provided the action behaves as `"tags-only"` automatically. | `registry` |
+
+### Tag-only publishing (binary releases)
+
+Projects that release **binaries** rather than publishing to a package registry
+can use `changelogs` without providing any registry token. When
+`CARGO_REGISTRY_TOKEN` (Rust) or `TWINE_PASSWORD` (Python) is absent,
+`changelogs publish` silently skips the registry upload, creates git tags for
+each package, and exits successfully — so the GitHub release step that follows
+runs normally.
+
+No extra configuration is required:
+
+```yaml
+- uses: wevm/changelogs@master
+  # No crate-token or pypi-token → tags-only mode automatically
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Set `publish-mode: tags-only` to make the intent explicit (the behaviour is
+identical, but it communicates to reviewers that registry publishing is
+intentionally omitted):
+
+```yaml
+- uses: wevm/changelogs@master
+  with:
+    publish-mode: tags-only
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
 
 ### Action Outputs
 

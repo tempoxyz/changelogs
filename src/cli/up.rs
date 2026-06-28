@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use std::env;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 pub fn run() -> Result<()> {
     let os = detect_os()?;
@@ -30,6 +32,7 @@ pub fn run() -> Result<()> {
         );
     }
 
+    #[cfg(unix)]
     fs::set_permissions(&current_exe, fs::Permissions::from_mode(0o755))
         .context("Failed to set executable permissions")?;
 
