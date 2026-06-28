@@ -34,6 +34,10 @@ inputs:
   post-version-command:
     description: 'Command to run after version bumps but before PR creation (e.g. refreshing lockfiles).'
     required: false
+  publish-mode:
+    description: '"registry" (default) publishes to crates.io/PyPI when a token is provided. "tags-only" documents intent to skip registry upload and only create git tags + GitHub releases. When no crate-token or pypi-token is provided the action already behaves as tags-only automatically regardless of this setting.'
+    required: false
+    default: 'registry'
   github-token:
     description: 'GitHub token for creating PRs'
     required: false

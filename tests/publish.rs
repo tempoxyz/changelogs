@@ -1,0 +1,79 @@
+use changelogs::ecosystems::{self, Ecosystem};
+use changelogs::{Package, PublishResult, SkipReason};
+use semver::Version;
+use tempfile::TempDir;
+
+fn rust_package(dir: &std::path::Path) -> Package {
+    let manifest = dir.join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"my-binary\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
+    Package {
+        name: "my-binary".to_string(),
+        version: Version::new(1, 0, 0),
+        path: dir.to_path_buf(),
+        manifest_path: manifest,
+        dependencies: vec![],
+    }
+}
+
+/// Rust: absent `CARGO_REGISTRY_TOKEN` → `Skipped(NoToken)`, not an error.
+///
+/// Binary-only projects (e.g. foundry-rs/foundry) skip crates.io but still
+/// want git tags and GitHub releases. The publish step must succeed so the
+/// downstream tagging steps can run.
+#[test]
+fn rust_publish_without_token_skips_silently() {
+    let dir = TempDir::new().unwrap();
+    let pkg = rust_package(dir.path());
+
+    // SAFETY: single-threaded test; no other test races on this env var.
+    unsafe {
+        std::env::remove_var("CARGO_REGISTRY_TOKEN");
+    }
+
+    let result = ecosystems::publish(Ecosystem::Rust, &pkg, false, None)
+        .expect("publish must not error when no registry token is configured");
+
+    assert_eq!(
+        result,
+        PublishResult::Skipped(SkipReason::NoToken),
+        "expected Skipped(NoToken) — git-tag creation must still proceed"
+    );
+}
+
+/// Python: absent `TWINE_PASSWORD` / `TWINE_USERNAME` → `Skipped(NoToken)`, not an error.
+#[test]
+fn python_publish_without_token_skips_silently() {
+    let dir = TempDir::new().unwrap();
+    let manifest = dir.path().join("pyproject.toml");
+    std::fs::write(
+        &manifest,
+        "[project]\nname = \"my-tool\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
+    let pkg = Package {
+        name: "my-tool".to_string(),
+        version: Version::new(1, 0, 0),
+        path: dir.path().to_path_buf(),
+        manifest_path: manifest,
+        dependencies: vec![],
+    };
+
+    // SAFETY: single-threaded test; no other test races on these env vars.
+    unsafe {
+        std::env::remove_var("TWINE_PASSWORD");
+        std::env::remove_var("TWINE_USERNAME");
+    }
+
+    let result = ecosystems::publish(Ecosystem::Python, &pkg, false, None)
+        .expect("publish must not error when no registry token is configured");
+
+    assert_eq!(
+        result,
+        PublishResult::Skipped(SkipReason::NoToken),
+        "expected Skipped(NoToken) — git-tag creation must still proceed"
+    );
+}
