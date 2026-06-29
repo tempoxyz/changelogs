@@ -27,6 +27,9 @@ inputs:
     description: 'Use conventional commit format (chore: prefix)'
     required: false
     default: 'false'
+  prerelease:
+    description: 'Prerelease identifier for release candidates (e.g. rc creates rc1, rc2).'
+    required: false
   branch:
     description: 'Branch name for the version PR'
     required: false
@@ -106,13 +109,20 @@ runs:
       if: steps.check.outputs.hasChangelogs == 'true'
       id: version
       shell: bash
+      env:
+        ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
+        PRERELEASE_INPUT: ${{ inputs.prerelease }}
       run: |
         export PATH="$HOME/.local/bin:$PATH"
-        ECOSYSTEM_FLAG=""
-        if [ -n "${{ inputs.ecosystem }}" ]; then
-          ECOSYSTEM_FLAG="--ecosystem ${{ inputs.ecosystem }}"
+        CMD=(changelogs)
+        if [ -n "$ECOSYSTEM_INPUT" ]; then
+          CMD+=(--ecosystem "$ECOSYSTEM_INPUT")
         fi
-        output=$(changelogs $ECOSYSTEM_FLAG version 2>&1) && version_exit=0 || version_exit=$?
+        CMD+=(version)
+        if [ -n "$PRERELEASE_INPUT" ]; then
+          CMD+=(--prerelease "$PRERELEASE_INPUT")
+        fi
+        output=$("${CMD[@]}" 2>&1) && version_exit=0 || version_exit=$?
         echo "$output"
         if [ $version_exit -ne 0 ]; then
           echo "::error::changelogs version failed with exit code $version_exit"
@@ -128,9 +138,10 @@ runs:
           fi
         fi
         
-        # Extract versions from output (e.g., "tempo-common 0.1.4 → 0.1.5" -> "tempo-common@0.1.5")
-        all_versions=$(echo "$output" | grep -oE '[a-zA-Z0-9_-]+ [0-9]+\.[0-9]+\.[0-9]+ → [0-9]+\.[0-9]+\.[0-9]+' | sed 's/ .* → /@/')
-        count=$(echo "$all_versions" | grep -c . || echo 0)
+        # Extract versions from output (e.g., "tempo-common 0.1.4 → 0.1.5-rc1" -> "tempo-common@0.1.5-rc1")
+        semver_re='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?'
+        all_versions=$(echo "$output" | grep -oE "[^[:space:]]+ $semver_re → $semver_re" | sed 's/ .* → /@/')
+        count=$(echo "$all_versions" | grep -c . || true)
         
         if [ "$changelog_format" = "root" ]; then
           # Root format: all packages share one version, use v{version}

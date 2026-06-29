@@ -89,6 +89,7 @@ Or download directly from [GitHub Releases](https://github.com/wevm/changelogs/r
 | `add --ai "<command>"` | Generate changelog using AI (see [Supported AI Providers](#supported-ai-providers)) |
 | `status` | Show pending changelogs and releases |
 | `version` | Apply version bumps and update changelogs |
+| `version --prerelease rc` | Apply prerelease bumps like `1.6.0-rc1`, then `1.6.0-rc2` |
 | `publish` | Publish unpublished packages to crates.io |
 
 ## Configuration
@@ -247,6 +248,21 @@ Use `post-version-command` to run a command after version bumps but before the P
     post-version-command: 'cargo metadata --format-version=1 > /dev/null'
 ```
 
+### Prerelease Versioning
+
+Use `prerelease` to create release candidate PRs before a stable release:
+
+```yaml
+- uses: wevm/changelogs@master
+  with:
+    prerelease: rc
+```
+
+This runs `changelogs version --prerelease rc`, creating versions like
+`1.6.0-rc1` and incrementing an existing `1.6.0-rc1` to `1.6.0-rc2`.
+Running `changelogs version` without `--prerelease` promotes an existing
+prerelease version to its stable version, such as `1.6.0`.
+
 ### Action Inputs
 
 | Input | Description | Default |
@@ -254,6 +270,7 @@ Use `post-version-command` to run a command after version bumps but before the P
 | `branch` | Branch name for the version PR | `changelog-release/main` |
 | `commit` | Commit message for version bump | `Version Packages` |
 | `conventional-commit` | Use conventional commit format | `false` |
+| `prerelease` | Prerelease identifier for release candidates, such as `rc` | - |
 | `post-version-command` | Command to run after version bumps but before PR creation | - |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
