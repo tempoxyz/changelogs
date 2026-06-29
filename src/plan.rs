@@ -3,7 +3,7 @@ use crate::changelog_entry::Changelog;
 use crate::config::{ChangelogFormat, Config, DependentBump};
 use crate::graph::DependencyGraph;
 use crate::workspace::Workspace;
-use semver::Version;
+use semver::{Prerelease, Version};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -22,6 +22,34 @@ pub struct PackageRelease {
     pub changelog_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrereleasePrefix(String);
+
+impl PrereleasePrefix {
+    pub fn new(prefix: impl Into<String>) -> Result<Self, String> {
+        let prefix = prefix.into();
+        if prefix.is_empty() {
+            return Err("prerelease identifier cannot be empty".to_string());
+        }
+
+        let candidate = format!("{}1", prefix);
+        Prerelease::new(&candidate)
+            .map_err(|e| format!("invalid prerelease identifier '{}': {}", prefix, e))?;
+
+        Ok(Self(prefix))
+    }
+
+    fn next(&self, current: Option<&Prerelease>) -> Prerelease {
+        let number = current
+            .and_then(|pre| pre.as_str().strip_prefix(&self.0))
+            .and_then(|suffix| suffix.parse::<u64>().ok())
+            .and_then(|n| n.checked_add(1))
+            .unwrap_or(1);
+
+        Prerelease::new(&format!("{}{number}", self.0)).expect("validated prerelease identifier")
+    }
+}
+
 pub fn bump_version(version: &Version, bump: BumpType) -> Version {
     match bump {
         BumpType::Major => Version::new(version.major + 1, 0, 0),
@@ -30,7 +58,63 @@ pub fn bump_version(version: &Version, bump: BumpType) -> Version {
     }
 }
 
+pub fn bump_version_with_prerelease(
+    version: &Version,
+    bump: BumpType,
+    prerelease: Option<&PrereleasePrefix>,
+) -> Version {
+    match prerelease {
+        Some(prefix) => {
+            let mut next = if version.pre.is_empty() {
+                bump_version(version, bump)
+            } else {
+                Version::new(version.major, version.minor, version.patch)
+            };
+            let current_pre = (!version.pre.is_empty()).then_some(&version.pre);
+            next.pre = prefix.next(current_pre);
+            next
+        }
+        None if !version.pre.is_empty() => {
+            Version::new(version.major, version.minor, version.patch)
+        }
+        None => bump_version(version, bump),
+    }
+}
+
 pub fn assemble(workspace: &Workspace, changelogs: Vec<Changelog>, config: &Config) -> ReleasePlan {
+    assemble_with_prerelease(workspace, changelogs, config, None)
+}
+
+pub fn assemble_stable_promotions(workspace: &Workspace, config: &Config) -> ReleasePlan {
+    let mut releases = workspace
+        .packages
+        .iter()
+        .filter(|pkg| !config.ignore.contains(&pkg.name))
+        .filter(|pkg| !pkg.version.pre.is_empty())
+        .map(|pkg| PackageRelease {
+            name: pkg.name.clone(),
+            bump: BumpType::Patch,
+            old_version: pkg.version.clone(),
+            new_version: Version::new(pkg.version.major, pkg.version.minor, pkg.version.patch),
+            changelog_ids: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+
+    releases.sort_by(|a, b| a.name.cmp(&b.name));
+
+    ReleasePlan {
+        changelogs: Vec::new(),
+        releases,
+        warnings: Vec::new(),
+    }
+}
+
+pub fn assemble_with_prerelease(
+    workspace: &Workspace,
+    changelogs: Vec<Changelog>,
+    config: &Config,
+    prerelease: Option<&PrereleasePrefix>,
+) -> ReleasePlan {
     let graph = DependencyGraph::from_workspace(workspace);
 
     let mut bump_map: HashMap<String, BumpType> = HashMap::new();
@@ -142,7 +226,7 @@ pub fn assemble(workspace: &Workspace, changelogs: Vec<Changelog>, config: &Conf
 
     for (name, bump) in bump_map {
         if let Some(package) = workspace.get_package(&name) {
-            let new_version = bump_version(&package.version, bump);
+            let new_version = bump_version_with_prerelease(&package.version, bump, prerelease);
             releases.push(PackageRelease {
                 name: name.clone(),
                 bump,
@@ -259,6 +343,98 @@ mod tests {
         assert_eq!(plan.releases[0].bump, BumpType::Minor);
         assert_eq!(plan.releases[0].old_version, Version::new(1, 0, 0));
         assert_eq!(plan.releases[0].new_version, Version::new(1, 1, 0));
+    }
+
+    #[test]
+    fn test_prerelease_bump_starts_at_one() {
+        let rc = PrereleasePrefix::new("rc").unwrap();
+        let version = bump_version_with_prerelease(
+            &Version::parse("1.5.0").unwrap(),
+            BumpType::Minor,
+            Some(&rc),
+        );
+
+        assert_eq!(version, Version::parse("1.6.0-rc1").unwrap());
+    }
+
+    #[test]
+    fn test_prerelease_bump_increments_existing_suffix() {
+        let rc = PrereleasePrefix::new("rc").unwrap();
+        let version = bump_version_with_prerelease(
+            &Version::parse("1.6.0-rc1").unwrap(),
+            BumpType::Patch,
+            Some(&rc),
+        );
+
+        assert_eq!(version, Version::parse("1.6.0-rc2").unwrap());
+    }
+
+    #[test]
+    fn test_stable_bump_promotes_prerelease() {
+        let version = bump_version_with_prerelease(
+            &Version::parse("1.6.0-rc2").unwrap(),
+            BumpType::Patch,
+            None,
+        );
+
+        assert_eq!(version, Version::parse("1.6.0").unwrap());
+    }
+
+    #[test]
+    fn test_assemble_stable_promotions() {
+        let ws = mock_workspace(vec![
+            mock_package("foo", "1.6.0-rc2", vec![]),
+            mock_package("bar", "1.0.0", vec![]),
+        ]);
+        let config = Config::default();
+
+        let plan = assemble_stable_promotions(&ws, &config);
+
+        assert_eq!(plan.releases.len(), 1);
+        assert_eq!(plan.releases[0].name, "foo");
+        assert_eq!(
+            plan.releases[0].old_version,
+            Version::parse("1.6.0-rc2").unwrap()
+        );
+        assert_eq!(
+            plan.releases[0].new_version,
+            Version::parse("1.6.0").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_assemble_stable_promotions_respects_ignore() {
+        let ws = mock_workspace(vec![mock_package("foo", "1.6.0-rc2", vec![])]);
+        let config = Config {
+            ignore: vec!["foo".to_string()],
+            ..Config::default()
+        };
+
+        let plan = assemble_stable_promotions(&ws, &config);
+
+        assert!(plan.releases.is_empty());
+    }
+
+    #[test]
+    fn test_assemble_with_prerelease() {
+        let ws = mock_workspace(vec![mock_package("foo", "1.0.0", vec![])]);
+        let changelogs = vec![make_changelog(
+            "cl1",
+            vec![Release {
+                package: "foo".to_string(),
+                bump: BumpType::Minor,
+            }],
+        )];
+        let config = Config::default();
+        let rc = PrereleasePrefix::new("rc").unwrap();
+
+        let plan = assemble_with_prerelease(&ws, changelogs, &config, Some(&rc));
+
+        assert_eq!(plan.releases.len(), 1);
+        assert_eq!(
+            plan.releases[0].new_version,
+            Version::parse("1.1.0-rc1").unwrap()
+        );
     }
 
     #[test]
