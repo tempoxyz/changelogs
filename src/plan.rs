@@ -85,6 +85,30 @@ pub fn assemble(workspace: &Workspace, changelogs: Vec<Changelog>, config: &Conf
     assemble_with_prerelease(workspace, changelogs, config, None)
 }
 
+pub fn assemble_stable_promotions(workspace: &Workspace, config: &Config) -> ReleasePlan {
+    let mut releases = workspace
+        .packages
+        .iter()
+        .filter(|pkg| !config.ignore.contains(&pkg.name))
+        .filter(|pkg| !pkg.version.pre.is_empty())
+        .map(|pkg| PackageRelease {
+            name: pkg.name.clone(),
+            bump: BumpType::Patch,
+            old_version: pkg.version.clone(),
+            new_version: Version::new(pkg.version.major, pkg.version.minor, pkg.version.patch),
+            changelog_ids: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+
+    releases.sort_by(|a, b| a.name.cmp(&b.name));
+
+    ReleasePlan {
+        changelogs: Vec::new(),
+        releases,
+        warnings: Vec::new(),
+    }
+}
+
 pub fn assemble_with_prerelease(
     workspace: &Workspace,
     changelogs: Vec<Changelog>,
@@ -354,6 +378,41 @@ mod tests {
         );
 
         assert_eq!(version, Version::parse("1.6.0").unwrap());
+    }
+
+    #[test]
+    fn test_assemble_stable_promotions() {
+        let ws = mock_workspace(vec![
+            mock_package("foo", "1.6.0-rc2", vec![]),
+            mock_package("bar", "1.0.0", vec![]),
+        ]);
+        let config = Config::default();
+
+        let plan = assemble_stable_promotions(&ws, &config);
+
+        assert_eq!(plan.releases.len(), 1);
+        assert_eq!(plan.releases[0].name, "foo");
+        assert_eq!(
+            plan.releases[0].old_version,
+            Version::parse("1.6.0-rc2").unwrap()
+        );
+        assert_eq!(
+            plan.releases[0].new_version,
+            Version::parse("1.6.0").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_assemble_stable_promotions_respects_ignore() {
+        let ws = mock_workspace(vec![mock_package("foo", "1.6.0-rc2", vec![])]);
+        let config = Config {
+            ignore: vec!["foo".to_string()],
+            ..Config::default()
+        };
+
+        let plan = assemble_stable_promotions(&ws, &config);
+
+        assert!(plan.releases.is_empty());
     }
 
     #[test]

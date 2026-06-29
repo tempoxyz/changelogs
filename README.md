@@ -263,6 +263,11 @@ This runs `changelogs version --prerelease rc`, creating versions like
 Running `changelogs version` without `--prerelease` promotes an existing
 prerelease version to its stable version, such as `1.6.0`.
 
+In the GitHub Action, leave `prerelease` unset for the stable release workflow.
+When there are no pending changelog files but package versions are still
+prereleases, the action opens a stable-promotion PR instead of publishing
+immediately.
+
 ### Action Inputs
 
 | Input | Description | Default |
