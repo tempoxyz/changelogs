@@ -44,7 +44,8 @@ fn rust_publish_without_token_skips_silently() {
     );
 }
 
-/// Python: absent `TWINE_PASSWORD` / `TWINE_USERNAME` → `Skipped(NoToken)`, not an error.
+/// Python: absent `TWINE_PASSWORD`, even with Action's default `TWINE_USERNAME`,
+/// returns `Skipped(NoToken)`, not an error.
 #[test]
 fn python_publish_without_token_skips_silently() {
     let dir = TempDir::new().unwrap();
@@ -65,7 +66,7 @@ fn python_publish_without_token_skips_silently() {
     // SAFETY: single-threaded test; no other test races on these env vars.
     unsafe {
         std::env::remove_var("TWINE_PASSWORD");
-        std::env::remove_var("TWINE_USERNAME");
+        std::env::set_var("TWINE_USERNAME", "__token__");
     }
 
     let result = ecosystems::publish(Ecosystem::Python, &pkg, false, None)
@@ -76,4 +77,9 @@ fn python_publish_without_token_skips_silently() {
         PublishResult::Skipped(SkipReason::NoToken),
         "expected Skipped(NoToken) — git-tag creation must still proceed"
     );
+
+    // SAFETY: test-only cleanup.
+    unsafe {
+        std::env::remove_var("TWINE_USERNAME");
+    }
 }

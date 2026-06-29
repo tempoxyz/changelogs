@@ -257,7 +257,7 @@ Use `post-version-command` to run a command after version bumps but before the P
 | `post-version-command` | Command to run after version bumps but before PR creation | - |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
-| `publish-mode` | `"registry"` publishes to crates.io/PyPI (default). `"tags-only"` documents that registry upload is intentionally skipped; only git tags and GitHub releases are created. When no `crate-token`/`pypi-token` is provided the action behaves as `"tags-only"` automatically. | `registry` |
+| `publish-mode` | `"registry"` publishes to crates.io/PyPI when credentials are available (default). `"tags-only"` disables registry upload even when credentials are available and only creates git tags and GitHub releases. When no registry credentials are available the action behaves as `"tags-only"` automatically. | `registry` |
 
 ### Tag-only publishing (binary releases)
 
@@ -268,18 +268,18 @@ can use `changelogs` without providing any registry token. When
 each package, and exits successfully — so the GitHub release step that follows
 runs normally.
 
-No extra configuration is required:
+No extra configuration is required when the workflow does not provide registry
+credentials:
 
 ```yaml
 - uses: wevm/changelogs@master
-  # No crate-token or pypi-token → tags-only mode automatically
+  # No registry credentials -> tags-only mode automatically
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Set `publish-mode: tags-only` to make the intent explicit (the behaviour is
-identical, but it communicates to reviewers that registry publishing is
-intentionally omitted):
+Set `publish-mode: tags-only` to force tag-only behavior even if registry
+credentials or PyPI Trusted Publishing via OIDC are available:
 
 ```yaml
 - uses: wevm/changelogs@master

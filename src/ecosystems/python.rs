@@ -167,10 +167,7 @@ impl EcosystemAdapter for PythonAdapter {
         let has_password = std::env::var("TWINE_PASSWORD")
             .map(|v| !v.is_empty())
             .unwrap_or(false);
-        let has_username = std::env::var("TWINE_USERNAME")
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
-        if !has_password && !has_username {
+        if !has_password {
             return Ok(PublishResult::Skipped(SkipReason::NoToken));
         }
 
@@ -929,14 +926,19 @@ version = "1.0.0"
 "#,
         );
         let pkg = &PythonAdapter::discover(tmp.path()).unwrap()[0];
-        // Ensure tokens are not set
+        // The GitHub Action always sets TWINE_USERNAME. Missing TWINE_PASSWORD
+        // must still be treated as no token so tag-only publishing can proceed.
         // SAFETY: test-only, no concurrent access to these env vars
         unsafe {
             std::env::remove_var("TWINE_PASSWORD");
-            std::env::remove_var("TWINE_USERNAME");
+            std::env::set_var("TWINE_USERNAME", "__token__");
         }
         let result = PythonAdapter::publish(pkg, false, None).unwrap();
         assert_eq!(result, PublishResult::Skipped(SkipReason::NoToken));
+        // SAFETY: test-only cleanup
+        unsafe {
+            std::env::remove_var("TWINE_USERNAME");
+        }
     }
 
     #[test]
