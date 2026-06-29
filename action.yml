@@ -51,10 +51,10 @@ outputs:
     description: 'The pull request number if created or updated'
     value: ${{ steps.pr.outputs.pull-request-number }}
   published:
-    description: 'Whether packages were published'
+    description: 'Whether packages were published to a registry'
     value: ${{ steps.publish.outputs.published }}
   publishedPackages:
-    description: 'JSON array of published packages'
+    description: 'JSON array of packages published to a registry'
     value: ${{ steps.publish.outputs.publishedPackages }}
 
 runs:
@@ -305,12 +305,13 @@ runs:
         output=$(changelogs $ECOSYSTEM_FLAG publish 2>&1) && publish_exit=0 || publish_exit=$?
         echo "$output"
         
-        # Parse published packages from output (✓ = published, ⊘ = skipped/tags-only)
-        packages=$(echo "$output" | { grep -E "^\s+\S+\s+v[0-9]" || true; } | { grep -E "✓|⊘" || true; } | awk '{print $1}' | jq -R -s -c 'split("\n") | map(select(length > 0))')
+        # Parse packages that were actually uploaded to a registry.
+        # Skipped rows (⊘) still produce git tags/releases, but are not registry publishes.
+        published_packages=$(echo "$output" | { grep -E "^\s+\S+\s+v[0-9]" || true; } | { grep -E "✓" || true; } | awk '{print $1}' | jq -R -s -c 'split("\n") | map(select(length > 0))')
         
-        if [ "$packages" != "[]" ] && [ -n "$packages" ]; then
+        if [ "$published_packages" != "[]" ] && [ -n "$published_packages" ]; then
           echo "published=true" >> $GITHUB_OUTPUT
-          echo "publishedPackages=$packages" >> $GITHUB_OUTPUT
+          echo "publishedPackages=$published_packages" >> $GITHUB_OUTPUT
         else
           echo "published=false" >> $GITHUB_OUTPUT
           echo "publishedPackages=[]" >> $GITHUB_OUTPUT

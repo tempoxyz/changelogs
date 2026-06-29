@@ -83,3 +83,46 @@ fn python_publish_without_token_skips_silently() {
         std::env::remove_var("TWINE_USERNAME");
     }
 }
+
+#[test]
+fn action_tags_only_mode_disables_registry_credentials() {
+    let action = include_str!("../action.yml");
+
+    assert!(
+        action.contains(
+            "if: steps.check.outputs.hasChangelogs == 'false' && inputs.ecosystem == 'python' && inputs.publish-mode == 'registry'"
+        ),
+        "PyPI auth must not run in tags-only mode"
+    );
+
+    for expected in [
+        "PUBLISH_MODE: ${{ inputs.publish-mode }}",
+        "if [ \"$PUBLISH_MODE\" = \"tags-only\" ]; then",
+        "unset CARGO_REGISTRY_TOKEN",
+        "unset TWINE_USERNAME",
+        "unset TWINE_PASSWORD",
+    ] {
+        assert!(
+            action.contains(expected),
+            "tags-only mode must clear registry credential: {expected}"
+        );
+    }
+}
+
+#[test]
+fn action_published_outputs_exclude_skipped_tag_only_rows() {
+    let action = include_str!("../action.yml");
+    let parser_line = action
+        .lines()
+        .find(|line| line.contains("published_packages=$(echo"))
+        .expect("publish action should parse published package rows");
+
+    assert!(
+        parser_line.contains("grep -E \"✓\""),
+        "publishedPackages must count only registry-published rows"
+    );
+    assert!(
+        !parser_line.contains("⊘"),
+        "publishedPackages must not count skipped/tag-only rows"
+    );
+}

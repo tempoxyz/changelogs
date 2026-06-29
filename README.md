@@ -235,7 +235,7 @@ jobs:
 **The release action automatically handles both versioning and publishing:**
 
 1. **If changelogs exist** → Creates/updates a "Version Packages" PR
-2. **If no changelogs** (PR was just merged) → Publishes unpublished packages to crates.io
+2. **If no changelogs** (PR was just merged) → Publishes unpublished packages to the configured registry, or creates git tags and GitHub releases in tag-only mode
 
 ### Post-Version Command
 
@@ -295,8 +295,8 @@ credentials or PyPI Trusted Publishing via OIDC are available:
 |--------|-------------|
 | `hasChangelogs` | Whether there are pending changelogs |
 | `pullRequestNumber` | The PR number if created/updated |
-| `published` | Whether packages were published |
-| `publishedPackages` | JSON array of published packages |
+| `published` | Whether packages were published to a registry |
+| `publishedPackages` | JSON array of packages published to a registry |
 
 ## Ecosystem Notes
 
