@@ -70,6 +70,10 @@ enum Commands {
         /// Compute and display the release plan without writing any files
         #[arg(long)]
         dry_run: bool,
+
+        /// Add or increment a prerelease identifier, such as rc for rc1, rc2
+        #[arg(long)]
+        prerelease: Option<String>,
     },
 }
 
@@ -90,7 +94,10 @@ fn main() -> Result<()> {
         }
         Commands::Status { verbose } => cli::status::run(verbose, cli.ecosystem)?,
         Commands::Up => cli::up::run()?,
-        Commands::Version { dry_run } => cli::version::run(dry_run, cli.ecosystem)?,
+        Commands::Version {
+            dry_run,
+            prerelease,
+        } => cli::version::run(dry_run, prerelease, cli.ecosystem)?,
     }
 
     Ok(())

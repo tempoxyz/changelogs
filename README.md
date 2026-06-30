@@ -89,6 +89,7 @@ Or download directly from [GitHub Releases](https://github.com/wevm/changelogs/r
 | `add --ai "<command>"` | Generate changelog using AI (see [Supported AI Providers](#supported-ai-providers)) |
 | `status` | Show pending changelogs and releases |
 | `version` | Apply version bumps and update changelogs |
+| `version --prerelease rc` | Apply prerelease bumps like `1.6.0-rc1`, then `1.6.0-rc2` |
 | `publish` | Publish unpublished packages to crates.io |
 
 ## Configuration
@@ -220,7 +221,9 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'release/**'
 
 jobs:
   release:
@@ -247,17 +250,38 @@ Use `post-version-command` to run a command after version bumps but before the P
     post-version-command: 'cargo metadata --format-version=1 > /dev/null'
 ```
 
+### Prerelease Versioning
+
+Use `prerelease` to create release candidate PRs before a stable release:
+
+```yaml
+- uses: wevm/changelogs@master
+  with:
+    prerelease: rc
+```
+
+This runs `changelogs version --prerelease rc`, creating versions like
+`1.6.0-rc1` and incrementing an existing `1.6.0-rc1` to `1.6.0-rc2`.
+Running `changelogs version` without `--prerelease` promotes an existing
+prerelease version to its stable version, such as `1.6.0`.
+
+In the GitHub Action, leave `prerelease` unset for the stable release workflow.
+When there are no pending changelog files but package versions are still
+prereleases, the action opens a stable-promotion PR instead of publishing
+immediately.
+
 ### Action Inputs
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `branch` | Branch name for the version PR | `changelog-release/main` |
+| `branch` | Branch name for the version PR. Defaults to `changelog-release/{trigger-branch}`, enabling independent release PRs per branch. | `changelog-release/{trigger-branch}` |
 | `commit` | Commit message for version bump | `Version Packages` |
 | `conventional-commit` | Use conventional commit format | `false` |
+| `prerelease` | Prerelease identifier for release candidates, such as `rc` | - |
 | `post-version-command` | Command to run after version bumps but before PR creation | - |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
-| `publish-mode` | `"registry"` publishes to crates.io/PyPI (default). `"tags-only"` documents that registry upload is intentionally skipped; only git tags and GitHub releases are created. When no `crate-token`/`pypi-token` is provided the action behaves as `"tags-only"` automatically. | `registry` |
+| `publish-mode` | `"registry"` publishes to crates.io/PyPI (default). `"tags-only"` intentionally skips registry authentication; only git tags and GitHub releases are created. When no registry authentication is configured, registry upload is skipped automatically. | `registry` |
 
 ### Tag-only publishing (binary releases)
 
@@ -268,18 +292,19 @@ can use `changelogs` without providing any registry token. When
 each package, and exits successfully — so the GitHub release step that follows
 runs normally.
 
-No extra configuration is required:
+When no registry authentication is configured, no extra configuration is
+required:
 
 ```yaml
 - uses: wevm/changelogs@master
-  # No crate-token or pypi-token → tags-only mode automatically
+  # No registry authentication configured -> tags-only mode automatically
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Set `publish-mode: tags-only` to make the intent explicit (the behaviour is
-identical, but it communicates to reviewers that registry publishing is
-intentionally omitted):
+Set `publish-mode: tags-only` to make the intent explicit and force registry
+authentication to be skipped even if registry credentials or PyPI Trusted
+Publishing are available:
 
 ```yaml
 - uses: wevm/changelogs@master
@@ -287,6 +312,28 @@ intentionally omitted):
     publish-mode: tags-only
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Multi-branch releases
+
+To maintain independent release trains per branch (e.g. patch releases on
+`release/v1.5` alongside new features on `master`), configure your release
+workflow to run on each release branch. The action then automatically creates a
+separate release PR per trigger branch:
+
+| Trigger branch  | Release PR branch                  |
+|-----------------|------------------------------------|
+| master          | changelog-release/master           |
+| release/v1.5    | changelog-release/release/v1.5     |
+| release/v2.0    | changelog-release/release/v2.0     |
+
+Changelog entries on each branch are independent. To override the release PR
+branch name, set the `branch` input explicitly:
+
+```yaml
+- uses: wevm/changelogs@master
+  with:
+    branch: my-custom-release-branch
 ```
 
 ### Action Outputs
