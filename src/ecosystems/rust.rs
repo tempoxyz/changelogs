@@ -319,6 +319,7 @@ impl RustAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     #[test]
@@ -493,6 +494,7 @@ my-dep = { version = \"1.0.0\" }\n";
     }
 
     #[test]
+    #[serial]
     fn publish_skipped_without_token() {
         let dir = TempDir::new().unwrap();
         let manifest = dir.path().join("Cargo.toml");

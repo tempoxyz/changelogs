@@ -167,10 +167,7 @@ impl EcosystemAdapter for PythonAdapter {
         let has_password = std::env::var("TWINE_PASSWORD")
             .map(|v| !v.is_empty())
             .unwrap_or(false);
-        let has_username = std::env::var("TWINE_USERNAME")
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
-        if !has_password && !has_username {
+        if !has_password {
             return Ok(PublishResult::Skipped(SkipReason::NoToken));
         }
 
@@ -543,6 +540,7 @@ impl PythonAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::io::Write;
     use tempfile::TempDir;
 
@@ -918,6 +916,7 @@ version = "1.0.0"
     }
 
     #[test]
+    #[serial]
     fn publish_skipped_without_tokens() {
         let tmp = TempDir::new().unwrap();
         create_pyproject(
@@ -929,11 +928,10 @@ version = "1.0.0"
 "#,
         );
         let pkg = &PythonAdapter::discover(tmp.path()).unwrap()[0];
-        // Ensure tokens are not set
-        // SAFETY: test-only, no concurrent access to these env vars
+        // Ensure TWINE_PASSWORD is absent (the action always sets TWINE_USERNAME).
+        // SAFETY: serialized via #[serial]; no concurrent env mutation.
         unsafe {
             std::env::remove_var("TWINE_PASSWORD");
-            std::env::remove_var("TWINE_USERNAME");
         }
         let result = PythonAdapter::publish(pkg, false, None).unwrap();
         assert_eq!(result, PublishResult::Skipped(SkipReason::NoToken));
