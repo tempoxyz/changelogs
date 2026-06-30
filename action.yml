@@ -31,9 +31,8 @@ inputs:
     description: 'Prerelease identifier for release candidates (e.g. rc creates rc1, rc2).'
     required: false
   branch:
-    description: 'Branch name for the version PR'
+    description: 'Branch name for the version PR. Defaults to changelog-release/{trigger-branch}, enabling independent release PRs per branch.'
     required: false
-    default: 'changelog-release/main'
   post-version-command:
     description: 'Command to run after version bumps but before PR creation (e.g. refreshing lockfiles).'
     required: false
@@ -116,6 +115,20 @@ runs:
           fi
         fi
         echo "hasPrereleases=$has_prereleases" >> $GITHUB_OUTPUT
+
+    - name: Resolve release branch
+      id: resolve-branch
+      shell: bash
+      env:
+        RELEASE_BRANCH_INPUT: ${{ inputs.branch }}
+        REF_NAME: ${{ github.ref_name }}
+      run: |
+        release_branch="$RELEASE_BRANCH_INPUT"
+        if [ -z "$release_branch" ]; then
+          ref="${REF_NAME#refs/heads/}"
+          release_branch="changelog-release/${ref}"
+        fi
+        echo "release_branch=$release_branch" >> "$GITHUB_OUTPUT"
 
     # Version mode: Create PR when changelogs exist, or when prereleases can be promoted to stable.
     - name: Setup Git user
@@ -228,7 +241,7 @@ runs:
       uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
       with:
         token: ${{ inputs.github-token }}
-        branch: ${{ inputs.branch }}
+        branch: ${{ steps.resolve-branch.outputs.release_branch }}
         title: ${{ steps.version.outputs.title }}
         body-path: ${{ steps.body.outputs.body-file }}
         base: ${{ github.ref_name }}

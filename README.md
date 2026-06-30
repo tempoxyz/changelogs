@@ -221,7 +221,9 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'release/**'
 
 jobs:
   release:
@@ -272,13 +274,35 @@ immediately.
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `branch` | Branch name for the version PR | `changelog-release/main` |
+| `branch` | Branch name for the version PR. Defaults to `changelog-release/{trigger-branch}`, enabling independent release PRs per branch. | `changelog-release/{trigger-branch}` |
 | `commit` | Commit message for version bump | `Version Packages` |
 | `conventional-commit` | Use conventional commit format | `false` |
 | `prerelease` | Prerelease identifier for release candidates, such as `rc` | - |
 | `post-version-command` | Command to run after version bumps but before PR creation | - |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
+
+### Multi-branch releases
+
+To maintain independent release trains per branch (e.g. patch releases on
+`release/v1.5` alongside new features on `master`), configure your release
+workflow to run on each release branch. The action then automatically creates a
+separate release PR per trigger branch:
+
+| Trigger branch  | Release PR branch                  |
+|-----------------|------------------------------------|
+| master          | changelog-release/master           |
+| release/v1.5    | changelog-release/release/v1.5     |
+| release/v2.0    | changelog-release/release/v2.0     |
+
+Changelog entries on each branch are independent. To override the release PR
+branch name, set the `branch` input explicitly:
+
+```yaml
+- uses: wevm/changelogs@master
+  with:
+    branch: my-custom-release-branch
+```
 
 ### Action Outputs
 
