@@ -27,6 +27,9 @@ inputs:
     description: 'Use conventional commit format (chore: prefix)'
     required: false
     default: 'false'
+  prerelease:
+    description: 'Prerelease identifier for release candidates (e.g. rc creates rc1, rc2).'
+    required: false
   branch:
     description: 'Branch name for the version PR. Defaults to changelog-release/{trigger-branch}, enabling independent release PRs per branch.'
     required: false
@@ -84,46 +87,75 @@ runs:
     - name: Check for changelogs
       id: check
       shell: bash
+      env:
+        ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
+        PRERELEASE_INPUT: ${{ inputs.prerelease }}
       run: |
+        has_changelogs=false
         if [ -d ".changelog" ] && [ "$(find .changelog -name '*.md' ! -name 'README.md' 2>/dev/null | head -1)" ]; then
-          echo "hasChangelogs=true" >> $GITHUB_OUTPUT
+          has_changelogs=true
           echo "Found pending changelogs"
         else
-          echo "hasChangelogs=false" >> $GITHUB_OUTPUT
           echo "No pending changelogs"
         fi
+        echo "hasChangelogs=$has_changelogs" >> $GITHUB_OUTPUT
+
+        has_prereleases=false
+        if [ "$has_changelogs" = "false" ] && [ -z "$PRERELEASE_INPUT" ]; then
+          CMD=(changelogs)
+          if [ -n "$ECOSYSTEM_INPUT" ]; then
+            CMD+=(--ecosystem "$ECOSYSTEM_INPUT")
+          fi
+          CMD+=(version --dry-run)
+
+          output=$("${CMD[@]}" 2>&1) && version_exit=0 || version_exit=$?
+          if [ $version_exit -eq 0 ] && echo "$output" | grep -Eq '[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*(\+[0-9A-Za-z][0-9A-Za-z.-]*)? → [0-9]+\.[0-9]+\.[0-9]+'; then
+            has_prereleases=true
+            echo "Found prerelease versions to promote"
+          fi
+        fi
+        echo "hasPrereleases=$has_prereleases" >> $GITHUB_OUTPUT
 
     - name: Resolve release branch
       id: resolve-branch
       shell: bash
+      env:
+        RELEASE_BRANCH_INPUT: ${{ inputs.branch }}
+        REF_NAME: ${{ github.ref_name }}
       run: |
-        RELEASE_BRANCH="${{ inputs.branch }}"
-        if [ -z "$RELEASE_BRANCH" ]; then
-          REF="${{ github.ref_name }}"
-          REF="${REF#refs/heads/}"
-          RELEASE_BRANCH="changelog-release/${REF}"
+        release_branch="$RELEASE_BRANCH_INPUT"
+        if [ -z "$release_branch" ]; then
+          ref="${REF_NAME#refs/heads/}"
+          release_branch="changelog-release/${ref}"
         fi
-        echo "release_branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
+        echo "release_branch=$release_branch" >> "$GITHUB_OUTPUT"
 
-    # Version mode: Create PR when changelogs exist
+    # Version mode: Create PR when changelogs exist, or when prereleases can be promoted to stable.
     - name: Setup Git user
-      if: steps.check.outputs.hasChangelogs == 'true'
+      if: steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true'
       shell: bash
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
     - name: Run version command
-      if: steps.check.outputs.hasChangelogs == 'true'
+      if: steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true'
       id: version
       shell: bash
+      env:
+        ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
+        PRERELEASE_INPUT: ${{ inputs.prerelease }}
       run: |
         export PATH="$HOME/.local/bin:$PATH"
-        ECOSYSTEM_FLAG=""
-        if [ -n "${{ inputs.ecosystem }}" ]; then
-          ECOSYSTEM_FLAG="--ecosystem ${{ inputs.ecosystem }}"
+        CMD=(changelogs)
+        if [ -n "$ECOSYSTEM_INPUT" ]; then
+          CMD+=(--ecosystem "$ECOSYSTEM_INPUT")
         fi
-        output=$(changelogs $ECOSYSTEM_FLAG version 2>&1) && version_exit=0 || version_exit=$?
+        CMD+=(version)
+        if [ -n "$PRERELEASE_INPUT" ]; then
+          CMD+=(--prerelease "$PRERELEASE_INPUT")
+        fi
+        output=$("${CMD[@]}" 2>&1) && version_exit=0 || version_exit=$?
         echo "$output"
         if [ $version_exit -ne 0 ]; then
           echo "::error::changelogs version failed with exit code $version_exit"
@@ -139,9 +171,10 @@ runs:
           fi
         fi
         
-        # Extract versions from output (e.g., "tempo-common 0.1.4 → 0.1.5" -> "tempo-common@0.1.5")
-        all_versions=$(echo "$output" | grep -oE '[a-zA-Z0-9_-]+ [0-9]+\.[0-9]+\.[0-9]+ → [0-9]+\.[0-9]+\.[0-9]+' | sed 's/ .* → /@/')
-        count=$(echo "$all_versions" | grep -c . || echo 0)
+        # Extract versions from output (e.g., "tempo-common 0.1.4 → 0.1.5-rc1" -> "tempo-common@0.1.5-rc1")
+        semver_re='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?'
+        all_versions=$(echo "$output" | grep -oE "[^[:space:]]+ $semver_re → $semver_re" | sed 's/ .* → /@/')
+        count=$(echo "$all_versions" | grep -c . || true)
         
         if [ "$changelog_format" = "root" ]; then
           # Root format: all packages share one version, use v{version}
@@ -177,12 +210,12 @@ runs:
         fi
 
     - name: Run post-version command
-      if: steps.check.outputs.hasChangelogs == 'true' && inputs.post-version-command != ''
+      if: (steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true') && inputs.post-version-command != ''
       shell: bash
       run: ${{ inputs.post-version-command }}
 
     - name: Generate PR body
-      if: steps.check.outputs.hasChangelogs == 'true'
+      if: steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true'
       id: body
       shell: bash
       run: |
@@ -203,7 +236,7 @@ runs:
         echo "body-file=/tmp/pr-body.md" >> $GITHUB_OUTPUT
 
     - name: Create or update PR
-      if: steps.check.outputs.hasChangelogs == 'true'
+      if: steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true'
       id: pr
       uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
       with:
@@ -215,10 +248,10 @@ runs:
         commit-message: ${{ inputs.commit || steps.version.outputs.commit-msg }}
         delete-branch: true
 
-    # Publish mode: Publish when no changelogs (PR was just merged)
+    # Publish mode: Publish when no changelogs or stable-promotion PR are needed.
     # Will publish to registry if tokens provided, otherwise just creates git tags
     - name: Setup Git user for tags
-      if: steps.check.outputs.hasChangelogs == 'false'
+      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false'
       shell: bash
       run: |
         git config user.name "github-actions[bot]"
@@ -236,7 +269,7 @@ runs:
     # also have GitHub OIDC enabled for their own registries, and must not try
     # to exchange that OIDC token with PyPI.
     - name: Configure PyPI auth
-      if: steps.check.outputs.hasChangelogs == 'false' && inputs.ecosystem == 'python'
+      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && inputs.ecosystem == 'python'
       shell: bash
       env:
         PYPI_TOKEN_INPUT: ${{ inputs.pypi-token }}
@@ -273,7 +306,7 @@ runs:
         fi
 
     - name: Publish packages
-      if: steps.check.outputs.hasChangelogs == 'false'
+      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false'
       id: publish
       shell: bash
       env:
@@ -307,12 +340,12 @@ runs:
         fi
 
     - name: Push git tags
-      if: steps.check.outputs.hasChangelogs == 'false' && steps.publish.outcome == 'success'
+      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'
       shell: bash
       run: git push --follow-tags
 
     - name: Create GitHub releases
-      if: steps.check.outputs.hasChangelogs == 'false' && steps.publish.outcome == 'success'
+      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}

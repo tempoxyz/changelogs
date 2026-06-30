@@ -10,7 +10,12 @@ use console::style;
 use semver::Version;
 use std::collections::HashMap;
 
-pub fn run(dry_run: bool, ecosystem: Option<Ecosystem>) -> Result<()> {
+pub fn run(dry_run: bool, prerelease: Option<String>, ecosystem: Option<Ecosystem>) -> Result<()> {
+    let prerelease = prerelease
+        .map(plan::PrereleasePrefix::new)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+
     let workspace = Workspace::discover_with_ecosystem(ecosystem).context(
         "could not detect workspace — specify ecosystem with: changelogs --ecosystem <rust|python|go|swift>",
     )?;
@@ -21,17 +26,23 @@ pub fn run(dry_run: bool, ecosystem: Option<Ecosystem>) -> Result<()> {
 
     let changelog_dir = workspace.changelog_dir();
     let changelogs = changelog_entry::read_all(&changelog_dir)?;
-
-    if changelogs.is_empty() {
+    let config = Config::load(&changelog_dir)?;
+    let has_changelogs = !changelogs.is_empty();
+    let release_plan = if has_changelogs {
+        plan::assemble_with_prerelease(&workspace, changelogs.clone(), &config, prerelease.as_ref())
+    } else if prerelease.is_none() {
+        plan::assemble_stable_promotions(&workspace, &config)
+    } else {
         println!("{} No changelogs found", style("ℹ").blue().bold());
         return Ok(());
-    }
-
-    let config = Config::load(&changelog_dir)?;
-    let release_plan = plan::assemble(&workspace, changelogs.clone(), &config);
+    };
 
     if release_plan.releases.is_empty() {
-        println!("{} No packages to release", style("ℹ").blue().bold());
+        if has_changelogs {
+            println!("{} No packages to release", style("ℹ").blue().bold());
+        } else {
+            println!("{} No changelogs found", style("ℹ").blue().bold());
+        }
         return Ok(());
     }
 
@@ -77,6 +88,15 @@ pub fn run(dry_run: bool, ecosystem: Option<Ecosystem>) -> Result<()> {
         version_updates.insert(release.name.clone(), release.new_version.clone());
     }
     workspace.update_dependency_versions(&version_updates)?;
+
+    if !has_changelogs {
+        println!(
+            "\n{} {} package(s) updated",
+            style("✓").green().bold(),
+            release_plan.releases.len()
+        );
+        return Ok(());
+    }
 
     println!("{} Updating changelogs...\n", style("→").blue().bold());
 
