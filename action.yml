@@ -62,6 +62,19 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Validate publish mode
+      shell: bash
+      env:
+        PUBLISH_MODE: ${{ inputs.publish-mode }}
+      run: |
+        case "$PUBLISH_MODE" in
+          registry|tags-only) ;;
+          *)
+            echo "::error::Invalid publish-mode '$PUBLISH_MODE'. Expected 'registry' or 'tags-only'."
+            exit 1
+            ;;
+        esac
+
     # Python tooling is only needed when the caller explicitly selects the
     # Python ecosystem. Other ecosystems can use GitHub OIDC for their own
     # registries, so OIDC availability alone must not trigger PyPI setup.
