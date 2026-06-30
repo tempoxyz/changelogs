@@ -221,7 +221,9 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'release/**'
 
 jobs:
   release:
@@ -283,8 +285,9 @@ immediately.
 ### Multi-branch releases
 
 To maintain independent release trains per branch (e.g. patch releases on
-`release/v1.5` alongside new features on `master`), no configuration is needed
-— the action automatically creates a separate release PR per trigger branch:
+`release/v1.5` alongside new features on `master`), configure your release
+workflow to run on each release branch. The action then automatically creates a
+separate release PR per trigger branch:
 
 | Trigger branch  | Release PR branch                  |
 |-----------------|------------------------------------|
