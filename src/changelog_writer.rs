@@ -154,11 +154,30 @@ fn write_change_lines(entry: &mut String, change: &ChangeWithMeta) {
     };
 
     let lines: Vec<&str> = change.summary.lines().collect();
+    let mut in_fence = false;
     for (i, line) in lines.iter().enumerate() {
         let is_last = i == lines.len() - 1;
         let line_suffix = if is_last { &suffix } else { "" };
 
-        if line.starts_with('-') || line.starts_with('*') {
+        if line.starts_with("```") || line.starts_with("~~~") {
+            // Keep fenced blocks inside the current changelog list item. In
+            // particular, diff lines beginning with `-` must not become new
+            // top-level list items, and metadata must not trail the closing
+            // fence or it will stop being recognized as a fence.
+            if i == 0 {
+                entry.push_str("-\n");
+            }
+            entry.push_str(&format!("  {}\n", line));
+            in_fence = !in_fence;
+            if is_last && !suffix.is_empty() {
+                entry.push_str(&format!("  {}\n", suffix.trim_start()));
+            }
+        } else if in_fence {
+            entry.push_str(&format!("  {}\n", line));
+            if is_last && !suffix.is_empty() {
+                entry.push_str(&format!("  {}\n", suffix.trim_start()));
+            }
+        } else if line.starts_with('-') || line.starts_with('*') {
             entry.push_str(&format!("{}{}\n", line, line_suffix));
         } else if !line.is_empty() {
             entry.push_str(&format!("- {}{}\n", line, line_suffix));
@@ -405,6 +424,27 @@ mod tests {
         assert!(output.contains("added new feature"));
         assert!(output.contains("with detailed explanation"));
         assert!(output.contains("and examples"));
+    }
+
+    #[test]
+    fn test_write_change_lines_keeps_diff_fence_in_list_item() {
+        let change = ChangeWithMeta {
+            summary: "Changed the configuration.\n```diff\n-old = true\n+new = true\n```"
+                .to_string(),
+            link: Some((
+                "https://github.com/example/repo/pull/123".to_string(),
+                "#123".to_string(),
+            )),
+            authors: vec!["octocat".to_string()],
+        };
+        let mut output = String::new();
+
+        write_change_lines(&mut output, &change);
+
+        assert_eq!(
+            output,
+            "- Changed the configuration.\n  ```diff\n  -old = true\n  +new = true\n  ```\n  (by @octocat, [#123](https://github.com/example/repo/pull/123))\n"
+        );
     }
 
     #[test]
