@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2 (2026-07-27)
+
+### Patch Changes
+
+- Authenticated tag pushes with the workflow token and explicitly dispatched binary release builds. (by @jxom, [#138](https://github.com/tempoxyz/changelogs/pull/138))
+
 ## 0.8.1 (2026-06-02)
 
 ### Patch Changes
