@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0 (2026-07-27)
+
+### Minor Changes
+
+- Added idempotent private Rust package selection and automatic binary-only workspace discovery for registry-free versioning and tags. (by @jxom, [#140](https://github.com/tempoxyz/changelogs/pull/140))
+
 ## 0.8.2 (2026-07-27)
 
 ### Patch Changes
