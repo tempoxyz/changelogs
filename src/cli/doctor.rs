@@ -2,6 +2,7 @@ use anyhow::Result;
 use changelogs::Ecosystem;
 use changelogs::changelog_entry;
 use changelogs::config::Config;
+use changelogs::error::Error;
 use changelogs::workspace::Workspace;
 use console::style;
 use std::process::Command;
@@ -30,6 +31,16 @@ fn check_workspace(ecosystem: Option<Ecosystem>) -> (CheckResult, Option<Workspa
             let msg = format!("Workspace detected ({})", style(ws.root.display()).dim());
             (CheckResult::Pass(msg), Some(ws))
         }
+        Err(Error::ConfigParse(error)) => (
+            CheckResult::Fail(format!("Config parse failed: {error}")),
+            None,
+        ),
+        Err(Error::UnknownPrivatePackage(package)) => (
+            CheckResult::Fail(format!(
+                "Private list references unknown package: {package}"
+            )),
+            None,
+        ),
         Err(e) => (
             CheckResult::Fail(format!("Workspace detection failed: {e}")),
             None,
@@ -131,6 +142,26 @@ fn check_ignore_list(config: &Config, package_names: &[&str]) -> CheckResult {
     }
 }
 
+fn check_private_list(config: &Config, package_names: &[&str]) -> CheckResult {
+    let invalid: Vec<_> = config
+        .private
+        .iter()
+        .filter(|member| !package_names.contains(&member.as_str()))
+        .collect();
+    if invalid.is_empty() {
+        CheckResult::Pass("Private list: all entries valid".into())
+    } else {
+        CheckResult::Fail(format!(
+            "Private list references unknown packages: {}",
+            invalid
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+}
+
 fn check_pending_changelogs(
     changelog_dir: &std::path::Path,
     package_names: &[&str],
@@ -220,6 +251,10 @@ pub fn run(ecosystem: Option<Ecosystem>) -> Result<()> {
     );
     run_checks(
         &mut results,
+        vec![check_private_list(&config, &package_names)],
+    );
+    run_checks(
+        &mut results,
         vec![check_pending_changelogs(&changelog_dir, &package_names)],
     );
     run_checks(&mut results, vec![check_git_remote()]);
@@ -290,6 +325,26 @@ mod tests {
             ..Default::default()
         };
         let result = check_ignore_list(&config, &["pkg-a"]);
+        assert!(!result.is_pass());
+    }
+
+    #[test]
+    fn test_check_private_list_all_valid() {
+        let config = Config {
+            private: vec!["pkg-a".into()],
+            ..Default::default()
+        };
+        let result = check_private_list(&config, &["pkg-a", "pkg-b"]);
+        assert!(result.is_pass());
+    }
+
+    #[test]
+    fn test_check_private_list_invalid() {
+        let config = Config {
+            private: vec!["pkg-missing".into()],
+            ..Default::default()
+        };
+        let result = check_private_list(&config, &["pkg-a"]);
         assert!(!result.is_pass());
     }
 

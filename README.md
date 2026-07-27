@@ -100,6 +100,12 @@ Or download directly from [GitHub Releases](https://github.com/wevm/changelogs/r
 # How to bump packages that depend on changed packages
 dependent_bump = "patch"  # patch, minor, or none
 
+# Packages to ignore
+ignore = []
+
+# Private Rust packages to version and tag without publishing
+private = []
+
 [changelog]
 format = "per-crate"  # or "root"
 
@@ -110,9 +116,6 @@ members = ["crate-a", "crate-b"]
 # Linked groups: versions sync when released together  
 [[linked]]
 members = ["sdk-core", "sdk-macros"]
-
-# Packages to ignore
-ignore = []
 ```
 
 ## Changelog Format
@@ -230,6 +233,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: wevm/changelogs@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -292,8 +297,20 @@ can use `changelogs` without providing any registry token. When
 each package, and exits successfully — so the GitHub release step that follows
 runs normally.
 
-When no registry authentication is configured, no extra configuration is
-required:
+Rust workspaces with no registry-publishable members retain their private
+packages automatically. Mixed workspaces can select private release packages
+explicitly, while leaving unlisted helper packages excluded:
+
+```toml
+private = ["my-binary"]
+```
+
+A non-empty `private` list selects only those private workspace members. Public
+members remain discoverable, and `ignore` can exclude any package from release
+planning. Selected private packages use git tags instead of registry state.
+
+After selecting the release packages, no registry authentication or extra
+Action input is required:
 
 ```yaml
 - uses: wevm/changelogs@master

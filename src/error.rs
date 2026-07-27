@@ -22,6 +22,9 @@ pub enum Error {
     #[error("package not found: {0}")]
     PackageNotFound(String),
 
+    #[error("private list references unknown package: {0}")]
+    UnknownPrivatePackage(String),
+
     #[error("failed to parse changelog {0}: {1}")]
     ChangelogParse(String, String),
 
