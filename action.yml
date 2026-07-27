@@ -41,7 +41,7 @@ inputs:
     required: false
     default: 'registry'
   github-token:
-    description: 'GitHub token for creating PRs'
+    description: 'GitHub token for creating PRs, pushing tags, and creating releases'
     required: false
     default: ${{ github.token }}
 
@@ -384,7 +384,11 @@ runs:
     - name: Push git tags
       if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'
       shell: bash
-      run: git push --follow-tags
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        gh auth setup-git --force --hostname github.com
+        git push --follow-tags
 
     - name: Create GitHub releases
       if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'

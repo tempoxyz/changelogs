@@ -392,7 +392,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          persist-credentials: true
+          persist-credentials: false
       - uses: wevm/changelogs@master
         with:
           ecosystem: python

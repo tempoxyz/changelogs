@@ -15,6 +15,7 @@ jobs:
     name: Version
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     steps:
@@ -32,9 +33,21 @@ jobs:
         run: cargo install --path .
 
       - name: Changelogs
+        id: changelogs
         uses: ./
         with:
           crate-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           conventional-commit: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build release binaries
+        if: steps.changelogs.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for tag in $(git tag --points-at HEAD); do
+            gh workflow run binary.yml \
+              --ref "$GITHUB_REF_NAME" \
+              --field tag="$tag"
+          done
