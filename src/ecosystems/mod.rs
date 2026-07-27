@@ -62,7 +62,7 @@ pub enum PublishResult {
 pub enum SkipReason {
     /// No registry token configured
     NoToken,
-    /// Package has `publish = false`
+    /// Registry publishing is disabled for this package
     NotPublishable,
 }
 
@@ -169,11 +169,26 @@ pub fn detect_ecosystem(start: &Path) -> Option<Ecosystem> {
 }
 
 pub fn discover_packages(ecosystem: Ecosystem, root: &Path) -> Result<Vec<Package>> {
+    discover_packages_with_private(ecosystem, root, &[])
+}
+
+pub(crate) fn discover_packages_with_private(
+    ecosystem: Ecosystem,
+    root: &Path,
+    private: &[String],
+) -> Result<Vec<Package>> {
     match ecosystem {
-        Ecosystem::Rust => RustAdapter::discover(root),
+        Ecosystem::Rust => RustAdapter::discover_with_private(root, private),
         Ecosystem::Python => PythonAdapter::discover(root),
         Ecosystem::Go => GoAdapter::discover(root),
         Ecosystem::Swift => SwiftAdapter::discover(root),
+    }
+}
+
+pub(crate) fn is_registry_publishable(ecosystem: Ecosystem, pkg: &Package) -> Result<bool> {
+    match ecosystem {
+        Ecosystem::Rust => RustAdapter::is_manifest_registry_publishable(&pkg.manifest_path),
+        Ecosystem::Python | Ecosystem::Go | Ecosystem::Swift => Ok(true),
     }
 }
 

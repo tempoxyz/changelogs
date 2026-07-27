@@ -89,17 +89,46 @@ runs:
       shell: bash
       run: pip install build==1.2.2.post1 twine==6.2.0
 
+    - name: Hash changelogs source
+      id: source
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        source_hash="$(
+          {
+            printf '%s\n' "$ACTION_PATH/Cargo.toml" "$ACTION_PATH/Cargo.lock"
+            find "$ACTION_PATH/src" -type f
+          } |
+            LC_ALL=C sort |
+            while IFS= read -r file; do
+              git hash-object "$file"
+            done |
+            git hash-object --stdin
+        )"
+        echo "hash=$source_hash" >> "$GITHUB_OUTPUT"
+
     - name: Cache changelogs binary
       id: cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cargo/bin/changelogs
-        key: changelogs-${{ runner.os }}-${{ runner.arch }}-${{ github.action_ref || hashFiles('Cargo.toml') }}
+        key: changelogs-${{ runner.os }}-${{ runner.arch }}-${{ steps.source.outputs.hash }}
 
     - name: Install changelogs
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: cargo install --path "${{ github.action_path }}"
+
+    - name: Authenticate Git
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: gh auth setup-git --force --hostname github.com
+
+    - name: Fetch release tags
+      shell: bash
+      run: git fetch --force --tags origin
 
     - name: Check for changelogs
       id: check
@@ -382,13 +411,11 @@ runs:
         fi
 
     - name: Push git tags
-      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'
+      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outputs.published == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-      run: |
-        gh auth setup-git --force --hostname github.com
-        git push --follow-tags
+      run: git push --follow-tags
 
     - name: Create GitHub releases
       if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'
@@ -398,6 +425,10 @@ runs:
       run: |
         # Get tags that were just pushed
         for tag in $(git tag --points-at HEAD); do
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "GitHub release $tag already exists"
+            continue
+          fi
           echo "Creating release for $tag"
           
           # Extract changelog section for this tag

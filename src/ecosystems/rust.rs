@@ -2,7 +2,7 @@ use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult, Ski
 use crate::error::Result;
 use cargo_metadata::MetadataCommand;
 use semver::Version;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 use toml_edit::DocumentMut;
@@ -15,53 +15,7 @@ impl EcosystemAdapter for RustAdapter {
     }
 
     fn discover(root: &Path) -> Result<Vec<Package>> {
-        let metadata = MetadataCommand::new().current_dir(root).exec()?;
-
-        let workspace_members: std::collections::HashSet<_> =
-            metadata.workspace_members.iter().collect();
-
-        let mut packages = Vec::new();
-
-        for package in &metadata.packages {
-            if !workspace_members.contains(&package.id) {
-                continue;
-            }
-
-            if package
-                .publish
-                .as_ref()
-                .is_some_and(|registries| registries.is_empty())
-            {
-                continue;
-            }
-
-            let deps: Vec<String> = package
-                .dependencies
-                .iter()
-                .filter_map(|dep| {
-                    metadata
-                        .packages
-                        .iter()
-                        .find(|p| p.name.as_str() == dep.name && workspace_members.contains(&p.id))
-                        .map(|p| p.name.to_string())
-                })
-                .collect();
-
-            packages.push(Package {
-                name: package.name.to_string(),
-                version: package.version.clone(),
-                path: package
-                    .manifest_path
-                    .parent()
-                    .unwrap()
-                    .to_path_buf()
-                    .into_std_path_buf(),
-                manifest_path: package.manifest_path.clone().into_std_path_buf(),
-                dependencies: deps,
-            });
-        }
-
-        Ok(packages)
+        Self::discover_with_private(root, &[])
     }
 
     fn read_version(manifest_path: &Path) -> Result<Version> {
@@ -166,21 +120,12 @@ impl EcosystemAdapter for RustAdapter {
     }
 
     fn publish(pkg: &Package, dry_run: bool, registry: Option<&str>) -> Result<PublishResult> {
-        if dry_run {
-            return Ok(PublishResult::Success);
+        if !Self::is_manifest_registry_publishable(&pkg.manifest_path)? {
+            return Ok(PublishResult::Skipped(SkipReason::NotPublishable));
         }
 
-        // Skip crates that have `publish = false` in their Cargo.toml
-        let content = std::fs::read_to_string(&pkg.manifest_path)?;
-        let doc: DocumentMut = content.parse()?;
-        if let Some(publish) = doc
-            .get("package")
-            .and_then(|p| p.get("publish"))
-            .and_then(|v| v.as_bool())
-        {
-            if !publish {
-                return Ok(PublishResult::Skipped(SkipReason::NotPublishable));
-            }
+        if dry_run {
+            return Ok(PublishResult::Success);
         }
 
         match std::env::var("CARGO_REGISTRY_TOKEN") {
@@ -223,6 +168,109 @@ impl EcosystemAdapter for RustAdapter {
 }
 
 impl RustAdapter {
+    pub(crate) fn discover_with_private(root: &Path, private: &[String]) -> Result<Vec<Package>> {
+        let metadata = MetadataCommand::new().current_dir(root).exec()?;
+
+        let workspace_members: HashSet<_> = metadata.workspace_members.iter().collect();
+
+        let workspace_packages: Vec<_> = metadata
+            .packages
+            .iter()
+            .filter(|package| workspace_members.contains(&package.id))
+            .collect();
+        let package_names: HashSet<_> = workspace_packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect();
+        if let Some(package) = private
+            .iter()
+            .find(|package| !package_names.contains(package.as_str()))
+        {
+            return Err(crate::error::Error::UnknownPrivatePackage(package.clone()));
+        }
+
+        let selected_private: HashSet<_> = private.iter().map(String::as_str).collect();
+        let include_all_private = selected_private.is_empty()
+            && !workspace_packages
+                .iter()
+                .any(|package| Self::is_registry_publishable(package));
+        let mut packages = Vec::new();
+
+        for package in workspace_packages {
+            if !Self::is_registry_publishable(package)
+                && !include_all_private
+                && !selected_private.contains(package.name.as_str())
+            {
+                continue;
+            }
+
+            let deps: Vec<String> = package
+                .dependencies
+                .iter()
+                .filter_map(|dep| {
+                    metadata
+                        .packages
+                        .iter()
+                        .find(|p| p.name.as_str() == dep.name && workspace_members.contains(&p.id))
+                        .map(|p| p.name.to_string())
+                })
+                .collect();
+
+            packages.push(Package {
+                name: package.name.to_string(),
+                version: package.version.clone(),
+                path: package
+                    .manifest_path
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+                    .into_std_path_buf(),
+                manifest_path: package.manifest_path.clone().into_std_path_buf(),
+                dependencies: deps,
+            });
+        }
+
+        Ok(packages)
+    }
+
+    fn is_registry_publishable(package: &cargo_metadata::Package) -> bool {
+        !package
+            .publish
+            .as_ref()
+            .is_some_and(|registries| registries.is_empty())
+    }
+
+    pub(crate) fn is_manifest_registry_publishable(manifest_path: &Path) -> Result<bool> {
+        let content = std::fs::read_to_string(manifest_path)?;
+        let doc: DocumentMut = content.parse()?;
+
+        if Self::is_workspace_inherited(&doc, "publish") {
+            let root_manifest = Self::find_workspace_root(manifest_path)?.join("Cargo.toml");
+            let root_content = std::fs::read_to_string(&root_manifest)?;
+            let root_doc: DocumentMut = root_content.parse()?;
+            let publish = root_doc
+                .get("workspace")
+                .and_then(|workspace| workspace.get("package"))
+                .and_then(|package| package.get("publish"));
+
+            return Ok(Self::publish_item_is_registry_publishable(publish));
+        }
+
+        let publish = doc
+            .get("package")
+            .and_then(|package| package.get("publish"));
+        Ok(Self::publish_item_is_registry_publishable(publish))
+    }
+
+    fn publish_item_is_registry_publishable(publish: Option<&toml_edit::Item>) -> bool {
+        !publish.is_some_and(|value| {
+            value.as_bool() == Some(false)
+                || value
+                    .as_array()
+                    .is_some_and(|registries| registries.is_empty())
+        })
+    }
+
     /// Check if a field in `[package]` uses workspace inheritance (e.g., `version.workspace = true`).
     fn is_workspace_inherited(doc: &DocumentMut, field: &str) -> bool {
         doc.get("package")
@@ -242,7 +290,7 @@ impl RustAdapter {
 
         loop {
             let candidate = current.join("Cargo.toml");
-            if candidate.exists() && candidate != manifest_path {
+            if candidate.exists() {
                 let content = std::fs::read_to_string(&candidate)?;
                 let doc: DocumentMut = content.parse()?;
                 if doc.get("workspace").is_some() {
@@ -543,6 +591,83 @@ my-dep = { version = \"1.0.0\" }\n";
     }
 
     #[test]
+    #[serial]
+    fn publish_skipped_when_publish_registries_are_empty() {
+        let dir = TempDir::new().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            "[package]\nname = \"test\"\nversion = \"1.0.0\"\npublish = []\n",
+        )
+        .unwrap();
+
+        let pkg = Package {
+            name: "test".to_string(),
+            version: Version::new(1, 0, 0),
+            path: dir.path().to_path_buf(),
+            manifest_path: manifest,
+            dependencies: vec![],
+        };
+
+        // SAFETY: serialized test, so no other test reads this environment variable.
+        unsafe {
+            std::env::set_var("CARGO_REGISTRY_TOKEN", "unused-test-token");
+        }
+        let result = RustAdapter::publish(&pkg, false, None);
+        // SAFETY: serialized test, so no other test reads this environment variable.
+        unsafe {
+            std::env::remove_var("CARGO_REGISTRY_TOKEN");
+        }
+
+        assert_eq!(
+            result.unwrap(),
+            PublishResult::Skipped(SkipReason::NotPublishable)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn publish_skipped_when_publish_is_workspace_inherited() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"tool\"]\n\n[workspace.package]\npublish = false\n",
+        )
+        .unwrap();
+        let package_dir = dir.path().join("tool");
+        std::fs::create_dir_all(&package_dir).unwrap();
+        let manifest = package_dir.join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            "[package]\nname = \"tool\"\nversion = \"1.0.0\"\npublish.workspace = true\n",
+        )
+        .unwrap();
+
+        let pkg = Package {
+            name: "tool".to_string(),
+            version: Version::new(1, 0, 0),
+            path: package_dir,
+            manifest_path: manifest,
+            dependencies: vec![],
+        };
+
+        // SAFETY: serialized test, so no other test reads this environment variable.
+        unsafe {
+            std::env::set_var("CARGO_REGISTRY_TOKEN", "unused-test-token");
+        }
+        let result = RustAdapter::publish(&pkg, false, None);
+        // SAFETY: serialized test, so no other test reads this environment variable.
+        unsafe {
+            std::env::remove_var("CARGO_REGISTRY_TOKEN");
+        }
+
+        assert_eq!(
+            result.unwrap(),
+            PublishResult::Skipped(SkipReason::NotPublishable)
+        );
+    }
+
+    #[test]
     fn discover_skips_publish_false_workspace_members() {
         let dir = TempDir::new().unwrap();
         let root_manifest = dir.path().join("Cargo.toml");
@@ -579,6 +704,92 @@ publish = false
         let names: Vec<_> = packages.iter().map(|pkg| pkg.name.as_str()).collect();
 
         assert_eq!(names, vec!["root-crate"]);
+
+        let packages =
+            RustAdapter::discover_with_private(dir.path(), &["internal-tool".to_string()]).unwrap();
+        let mut names: Vec<_> = packages.iter().map(|pkg| pkg.name.as_str()).collect();
+        names.sort_unstable();
+
+        assert_eq!(names, vec!["internal-tool", "root-crate"]);
+    }
+
+    #[test]
+    fn discover_includes_publish_false_when_all_workspace_members_are_private() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"[package]
+name = "root-binary"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+members = [".", "crates/internal-tool"]
+"#,
+        )
+        .unwrap();
+
+        let internal_dir = dir.path().join("crates").join("internal-tool");
+        std::fs::create_dir_all(internal_dir.join("src")).unwrap();
+        std::fs::write(
+            internal_dir.join("Cargo.toml"),
+            r#"[package]
+name = "internal-tool"
+version = "1.0.0"
+edition = "2021"
+publish = false
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("lib.rs"), "").unwrap();
+        std::fs::write(internal_dir.join("src").join("lib.rs"), "").unwrap();
+
+        let packages = RustAdapter::discover(dir.path()).unwrap();
+        let mut names: Vec<_> = packages.iter().map(|pkg| pkg.name.as_str()).collect();
+        names.sort_unstable();
+
+        assert_eq!(names, vec!["internal-tool", "root-binary"]);
+
+        let packages =
+            RustAdapter::discover_with_private(dir.path(), &["root-binary".to_string()]).unwrap();
+        let names: Vec<_> = packages.iter().map(|pkg| pkg.name.as_str()).collect();
+
+        assert_eq!(names, vec!["root-binary"]);
+    }
+
+    #[test]
+    fn discover_includes_workspace_inherited_private_package() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"[workspace]
+members = ["tool"]
+
+[workspace.package]
+publish = false
+"#,
+        )
+        .unwrap();
+        let package_dir = dir.path().join("tool");
+        std::fs::create_dir_all(package_dir.join("src")).unwrap();
+        std::fs::write(
+            package_dir.join("Cargo.toml"),
+            r#"[package]
+name = "tool"
+version = "1.0.0"
+edition = "2021"
+publish.workspace = true
+"#,
+        )
+        .unwrap();
+        std::fs::write(package_dir.join("src").join("lib.rs"), "").unwrap();
+
+        let packages = RustAdapter::discover(dir.path()).unwrap();
+        let names: Vec<_> = packages.iter().map(|pkg| pkg.name.as_str()).collect();
+
+        assert_eq!(names, vec!["tool"]);
     }
 
     #[test]

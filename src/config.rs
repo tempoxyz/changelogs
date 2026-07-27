@@ -24,6 +24,9 @@ pub struct Config {
     pub ignore: Vec<String>,
 
     #[serde(default)]
+    pub private: Vec<String>,
+
+    #[serde(default)]
     pub ai: AiConfig,
 }
 
@@ -90,6 +93,7 @@ impl Default for Config {
             fixed: Vec::new(),
             linked: Vec::new(),
             ignore: Vec::new(),
+            private: Vec::new(),
             ai: AiConfig::default(),
         }
     }
@@ -129,6 +133,9 @@ dependent_bump = "patch"
 # Packages to ignore
 ignore = []
 
+# Private Rust packages to version and tag without publishing
+private = []
+
 # Fixed groups: all packages always share the same version
 # [[fixed]]
 # members = ["package-a", "package-b"]
@@ -165,6 +172,7 @@ mod tests {
         assert!(config.fixed.is_empty());
         assert!(config.linked.is_empty());
         assert!(config.ignore.is_empty());
+        assert!(config.private.is_empty());
     }
 
     #[test]
@@ -184,6 +192,7 @@ mod tests {
                 members: vec!["x".into(), "y".into()],
             }],
             ignore: vec!["foo".into()],
+            private: vec!["private-tool".into()],
             ai: AiConfig {
                 command: Some("test-cmd".into()),
             },
@@ -199,6 +208,7 @@ mod tests {
         assert_eq!(loaded.linked.len(), 1);
         assert_eq!(loaded.linked[0].members, vec!["x", "y"]);
         assert_eq!(loaded.ignore, vec!["foo"]);
+        assert_eq!(loaded.private, vec!["private-tool"]);
         assert_eq!(loaded.ai.command.as_deref(), Some("test-cmd"));
     }
 
@@ -212,15 +222,19 @@ mod tests {
     }
 
     #[test]
-    fn test_default_toml_ignore_is_top_level() {
+    fn test_default_toml_package_lists_are_top_level() {
         let content = Config::default_toml();
         let config: Config = toml::from_str(content).unwrap();
-        // ignore must parse as a top-level field, not silently land under [changelog]
         assert!(config.ignore.is_empty());
-        // Verify it's actually parsed by setting a value
+        assert!(config.private.is_empty());
+
         let with_ignore = content.replace("ignore = []", r#"ignore = ["foo", "bar"]"#);
         let config: Config = toml::from_str(&with_ignore).unwrap();
         assert_eq!(config.ignore, vec!["foo", "bar"]);
+
+        let with_private = content.replace("private = []", r#"private = ["private-tool"]"#);
+        let config: Config = toml::from_str(&with_private).unwrap();
+        assert_eq!(config.private, vec!["private-tool"]);
     }
 
     #[test]
@@ -240,5 +254,6 @@ mod tests {
         assert!(config.fixed.is_empty());
         assert!(config.linked.is_empty());
         assert!(config.ignore.is_empty());
+        assert!(config.private.is_empty());
     }
 }
