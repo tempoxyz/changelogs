@@ -17,6 +17,10 @@ inputs:
     description: 'GitHub token for commenting on PR'
     required: false
     default: ${{ github.token }}
+  comment:
+    description: 'Whether to comment on the PR (disabled by default for fork PRs)'
+    required: false
+    default: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
 outputs:
   found:
@@ -76,6 +80,7 @@ runs:
 
     - name: Build comment body
       id: body
+      if: inputs.comment == 'true'
       shell: bash
       run: |
         REPO="${{ github.repository }}"
@@ -146,6 +151,7 @@ runs:
 
     - name: Find existing comment
       id: find
+      if: inputs.comment == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -158,6 +164,7 @@ runs:
         echo "comment_id=$COMMENT_ID" >> $GITHUB_OUTPUT
 
     - name: Create or update comment
+      if: inputs.comment == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
