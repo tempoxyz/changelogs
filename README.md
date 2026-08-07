@@ -202,7 +202,8 @@ jobs:
   changelog:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -214,6 +215,10 @@ jobs:
         env:
           AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
 ```
+
+On fork pull requests, GitHub provides a read-only `GITHUB_TOKEN`. The check
+still runs and sets the `found` output, but skips the PR comment by default.
+Set `comment: true` only when passing a token that can write PR comments.
 
 ### Create RC PR or Release
 
