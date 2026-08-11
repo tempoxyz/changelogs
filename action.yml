@@ -87,7 +87,7 @@ runs:
     - name: Install Python build tools (for Python ecosystem)
       if: inputs.ecosystem == 'python'
       shell: bash
-      run: pip install build==1.2.2.post1 twine==6.2.0
+      run: pip install build==1.2.2.post1 twine==7.0.0
 
     - name: Hash changelogs source
       id: source
