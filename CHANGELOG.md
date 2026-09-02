@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1 (2026-09-02)
+
+### Patch Changes
+
+- Support Python packages using Core Metadata 2.5 by upgrading the pinned Twine publisher. (by @ParvAhuja, [#148](https://github.com/tempoxyz/changelogs/pull/148))
+
 ## 0.9.0 (2026-07-27)
 
 ### Minor Changes
