@@ -134,6 +134,7 @@ runs:
       id: check
       shell: bash
       env:
+        CONVENTIONAL_COMMIT_INPUT: ${{ inputs.conventional-commit }}
         ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
         PRERELEASE_INPUT: ${{ inputs.prerelease }}
       run: |
@@ -266,7 +267,7 @@ runs:
         echo "versions=$versions" >> $GITHUB_OUTPUT
         
         # Build title and commit message with optional conventional commit prefix
-        if [ "${{ inputs.conventional-commit }}" = "true" ]; then
+        if [ "$CONVENTIONAL_COMMIT_INPUT" = "true" ]; then
           echo "title=chore: release $versions" >> $GITHUB_OUTPUT
           echo "commit-msg=chore: release $versions" >> $GITHUB_OUTPUT
         else
@@ -277,7 +278,9 @@ runs:
     - name: Run post-version command
       if: (steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true') && inputs.post-version-command != ''
       shell: bash
-      run: ${{ inputs.post-version-command }}
+      env:
+        POST_VERSION_COMMAND: ${{ inputs.post-version-command }}
+      run: bash -c "$POST_VERSION_COMMAND"
 
     - name: Generate PR body
       if: steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true'
@@ -338,7 +341,7 @@ runs:
       shell: bash
       env:
         PYPI_TOKEN_INPUT: ${{ inputs.pypi-token }}
-      run: |
+      run: | # zizmor: ignore[github-env] A masked PyPI credential must be passed to the subsequent publish step.
         if [ -n "$PYPI_TOKEN_INPUT" ]; then
           echo "::add-mask::$PYPI_TOKEN_INPUT"
           echo "TWINE_PASSWORD=$PYPI_TOKEN_INPUT" >> "$GITHUB_ENV"
@@ -376,6 +379,7 @@ runs:
       shell: bash
       env:
         CARGO_REGISTRY_TOKEN: ${{ inputs.publish-mode != 'tags-only' && inputs.crate-token || '' }}
+        ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
         PUBLISH_MODE: ${{ inputs.publish-mode }}
         TWINE_USERNAME: __token__
         # TWINE_PASSWORD is set via $GITHUB_ENV by the "Configure PyPI auth" step
@@ -387,11 +391,11 @@ runs:
           unset TWINE_USERNAME
           unset TWINE_PASSWORD
         fi
-        ECOSYSTEM_FLAG=""
-        if [ -n "${{ inputs.ecosystem }}" ]; then
-          ECOSYSTEM_FLAG="--ecosystem ${{ inputs.ecosystem }}"
+        ECOSYSTEM_FLAG=()
+        if [ -n "$ECOSYSTEM_INPUT" ]; then
+          ECOSYSTEM_FLAG=(--ecosystem "$ECOSYSTEM_INPUT")
         fi
-        output=$(changelogs $ECOSYSTEM_FLAG publish 2>&1) && publish_exit=0 || publish_exit=$?
+        output=$(changelogs "${ECOSYSTEM_FLAG[@]}" publish 2>&1) && publish_exit=0 || publish_exit=$?
         echo "$output"
         
         # Parse published packages from output (✓ = published, ⊘ = skipped/tags-only)

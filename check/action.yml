@@ -33,8 +33,10 @@ runs:
     - name: Check for changelog
       id: check
       shell: bash
+      env:
+        REF_INPUT: ${{ inputs.ref }}
       run: |
-        CHANGELOGS=$(git diff --name-only origin/${{ inputs.ref }}...HEAD -- '.changelog/*.md' | grep -v config.toml || true)
+        CHANGELOGS=$(git diff --name-only "origin/$REF_INPUT"...HEAD -- '.changelog/*.md' | grep -v config.toml || true)
         if [ -n "$CHANGELOGS" ]; then
           echo "found=true" >> $GITHUB_OUTPUT
           echo "changelog_files<<EOF" >> $GITHUB_OUTPUT
@@ -53,15 +55,19 @@ runs:
       id: ai
       if: steps.check.outputs.found == 'false' && inputs.ai != ''
       shell: bash
+      env:
+        AI_INPUT: ${{ inputs.ai }}
+        ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
+        REF_INPUT: ${{ inputs.ref }}
       run: |
         export PATH="$HOME/.local/bin:$PATH"
         
         # Run changelogs add with AI
         CMD=(changelogs)
-        if [ -n "${{ inputs.ecosystem }}" ]; then
-          CMD+=(--ecosystem "${{ inputs.ecosystem }}")
+        if [ -n "$ECOSYSTEM_INPUT" ]; then
+          CMD+=(--ecosystem "$ECOSYSTEM_INPUT")
         fi
-        CMD+=(add --ai "${{ inputs.ai }}" --ref "origin/${{ inputs.ref }}")
+        CMD+=(add --ai "$AI_INPUT" --ref "origin/$REF_INPUT")
         "${CMD[@]}"
         
         # Find the generated changelog file
@@ -82,13 +88,16 @@ runs:
       id: body
       if: inputs.comment == 'true'
       shell: bash
+      env:
+        AI_GENERATED_OUTPUT: ${{ steps.ai.outputs.generated }}
+        CHANGELOG_FILES_OUTPUT: ${{ steps.check.outputs.changelog_files }}
+        CHANGELOG_FOUND_OUTPUT: ${{ steps.check.outputs.found }}
+        HEAD_REF: ${{ github.head_ref }}
+        REPO: ${{ github.repository }}
       run: |
-        REPO="${{ github.repository }}"
-        HEAD_REF="${{ github.head_ref }}"
-        
-        if [ "${{ steps.check.outputs.found }}" = "true" ]; then
+        if [ "$CHANGELOG_FOUND_OUTPUT" = "true" ]; then
           # Changelog found - show edit link
-          CHANGELOG_FILE=$(echo "${{ steps.check.outputs.changelog_files }}" | head -n1)
+          CHANGELOG_FILE=$(echo "$CHANGELOG_FILES_OUTPUT" | head -n1)
           EDIT_URL="https://github.com/${REPO}/edit/${HEAD_REF}/${CHANGELOG_FILE}"
           
           BODY="### ✅ Changelog found on PR.
@@ -96,7 +105,7 @@ runs:
         [Edit changelog](${EDIT_URL})"
         else
           # No changelog - build template
-          if [ "${{ steps.ai.outputs.generated }}" = "true" ]; then
+          if [ "$AI_GENERATED_OUTPUT" = "true" ]; then
             TEMPLATE=$(cat /tmp/ai_changelog.md)
             AI_GENERATED=true
           else
@@ -167,16 +176,19 @@ runs:
       if: inputs.comment == 'true'
       shell: bash
       env:
+        COMMENT_ID: ${{ steps.find.outputs.comment_id }}
         GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
       run: |
         BODY=$(cat /tmp/comment_body.md)
         
-        if [ -n "${{ steps.find.outputs.comment_id }}" ]; then
+        if [ -n "$COMMENT_ID" ]; then
           gh api \
             --method PATCH \
             -H "Accept: application/vnd.github+json" \
-            "/repos/${{ github.repository }}/issues/comments/${{ steps.find.outputs.comment_id }}" \
+            "/repos/$REPO/issues/comments/$COMMENT_ID" \
             -f body="$BODY"
         else
-          gh pr comment ${{ github.event.pull_request.number }} --body "$BODY"
+          gh pr comment "$PR_NUMBER" --body "$BODY"
         fi

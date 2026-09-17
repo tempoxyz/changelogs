@@ -20,6 +20,9 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8 # main
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,7 +46,7 @@ jobs:
         id: changelogs
         uses: ./
         with:
-          crate-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          crate-token: ${{ secrets.CARGO_REGISTRY_TOKEN }} # zizmor: ignore[secrets-outside-env] Publishing is restricted to pushes on the protected master branch above.
           conventional-commit: true
           github-token: ${{ steps.app-token.outputs.token }}
 
