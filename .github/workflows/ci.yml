@@ -21,21 +21,21 @@ jobs:
       id-token: write
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf # main
+        uses: tempoxyz/gh-actions/actions/secure-runner@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
+      - uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
         with:
           components: rustfmt, clippy
-      - uses: tempoxyz/gh-actions/vendor/Swatinem/rust-cache@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
+      - uses: tempoxyz/gh-actions/vendor/Swatinem/rust-cache@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace -- -D warnings
 
   deny:
     name: Deny
-    uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf # main
+    uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
     permissions:
       contents: read
       id-token: write
@@ -53,12 +53,12 @@ jobs:
       id-token: write
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf # main
+        uses: tempoxyz/gh-actions/actions/secure-runner@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
-      - uses: tempoxyz/gh-actions/vendor/Swatinem/rust-cache@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
+      - uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
+      - uses: tempoxyz/gh-actions/vendor/Swatinem/rust-cache@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
       - run: cargo build
       - run: cargo test

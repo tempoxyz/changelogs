@@ -21,7 +21,7 @@ jobs:
       id-token: write
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf # main
+        uses: tempoxyz/gh-actions/actions/secure-runner@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,14 +31,14 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
+        uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
 
       - name: Install changelogs
         run: cargo install --path .
 
       - name: Fetch GitHub token via STS
         id: app-token
-        uses: tempoxyz/gh-actions/actions/github-sts@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
+        uses: tempoxyz/gh-actions/actions/github-sts@baf48ebcfcb26812085b8351125493b2ef8009ab # 2026-09-21T19-33-30Z-baf48ebc
         with:
           policy: release
 
