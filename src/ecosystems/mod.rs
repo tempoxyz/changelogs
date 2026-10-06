@@ -13,6 +13,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use ureq::tls::{RootCerts, TlsConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -253,5 +254,30 @@ pub fn tag_name(ecosystem: Ecosystem, pkg: &Package) -> String {
         Ecosystem::Python => PythonAdapter::tag_name(pkg),
         Ecosystem::Go => GoAdapter::tag_name(pkg),
         Ecosystem::Swift => SwiftAdapter::tag_name(pkg),
+    }
+}
+
+fn registry_agent() -> ureq::Agent {
+    // Aegis installs its CA in the runner's system store, not ureq's bundled roots.
+    ureq::Agent::config_builder()
+        .tls_config(
+            TlsConfig::builder()
+                .root_certs(RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .build()
+        .new_agent()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_agent_uses_platform_trust() {
+        assert!(matches!(
+            registry_agent().config().tls_config().root_certs(),
+            RootCerts::PlatformVerifier
+        ));
     }
 }
