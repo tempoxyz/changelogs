@@ -353,7 +353,7 @@ fn latest_git_tag_version(repo_dir: &Path) -> Option<Version> {
 fn check_proxy_published(module_path: &str, version: &Version) -> Result<bool> {
     let escaped = escape_module_path(module_path);
     let url = format!("https://proxy.golang.org/{}/@v/v{}.info", escaped, version);
-    match ureq::get(&url).call() {
+    match super::registry_agent().get(&url).call() {
         Ok(_) => Ok(true),
         Err(ureq::Error::StatusCode(404)) => Ok(false),
         Err(ureq::Error::StatusCode(410)) => Ok(false),

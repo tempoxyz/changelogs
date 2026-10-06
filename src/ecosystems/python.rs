@@ -140,7 +140,7 @@ impl EcosystemAdapter for PythonAdapter {
         let normalized_name = Self::normalize_pep503(name);
         let url = format!("https://pypi.org/pypi/{}/json", normalized_name);
 
-        let mut response = match ureq::get(&url).call() {
+        let mut response = match super::registry_agent().get(&url).call() {
             Ok(resp) => resp,
             Err(ureq::Error::StatusCode(404)) => return Ok(false),
             Err(e) => return Err(Error::PypiCheckFailed(e.to_string())),

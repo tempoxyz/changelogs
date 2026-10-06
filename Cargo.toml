@@ -43,8 +43,8 @@ rand = "0.10"
 chrono = "0.4"
 regex = "1"
 
-# HTTP (for PyPI API)
-ureq = { version = "3", features = ["json"] }
+# HTTP (for PyPI and Go module proxy)
+ureq = { version = "3", features = ["json", "platform-verifier"] }
 serde_json = "1"
 
 [dev-dependencies]
