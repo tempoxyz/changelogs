@@ -32,7 +32,7 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code@2.1.105 # zizmor: ignore[adhoc-packages] The CLI is exactly version-pinned and is not a project dependency.
 
       - name: Check changelogs
-        uses: ./check
+        uses: ./check # zizmor: ignore[self-repository] actionlint does not support $/ references yet.
         timeout-minutes: 5
         with:
           ai: 'claude -p --dangerously-skip-permissions'

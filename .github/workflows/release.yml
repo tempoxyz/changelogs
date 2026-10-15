@@ -44,7 +44,7 @@ jobs:
 
       - name: Changelogs
         id: changelogs
-        uses: ./
+        uses: ./ # zizmor: ignore[self-repository] actionlint does not support $/ references yet.
         with:
           crate-token: ${{ secrets.CARGO_REGISTRY_TOKEN }} # zizmor: ignore[secrets-outside-env] Publishing is restricted to pushes on the protected master branch above.
           conventional-commit: true
