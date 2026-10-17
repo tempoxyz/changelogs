@@ -20,5 +20,4 @@ unmaintained = "workspace"
 
 [sources]
 unknown-registry = "deny"
-unknown-git = "deny"
-allow-git = []
+unknown-git = "allow"
