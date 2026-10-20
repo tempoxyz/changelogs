@@ -309,10 +309,8 @@ fn run_ai_generation(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    if !is_openai_chat_completions {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(prompt.as_bytes())?;
-        }
+    if !is_openai_chat_completions && let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes())?;
     }
 
     let output = child.wait_with_output()?;

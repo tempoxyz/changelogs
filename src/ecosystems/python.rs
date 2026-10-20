@@ -73,23 +73,22 @@ impl EcosystemAdapter for PythonAdapter {
         let mut doc: DocumentMut = content.parse()?;
 
         // Try PEP 621 first
-        if let Some(project) = doc.get_mut("project").and_then(|p| p.as_table_mut()) {
-            if project.contains_key("version") {
-                project["version"] = toml_edit::value(version.to_string());
-                std::fs::write(manifest_path, doc.to_string())?;
-                return Ok(());
-            }
+        if let Some(project) = doc.get_mut("project").and_then(|p| p.as_table_mut())
+            && project.contains_key("version")
+        {
+            project["version"] = toml_edit::value(version.to_string());
+            std::fs::write(manifest_path, doc.to_string())?;
+            return Ok(());
         }
 
         // Try Poetry
-        if let Some(tool) = doc.get_mut("tool").and_then(|t| t.as_table_mut()) {
-            if let Some(poetry) = tool.get_mut("poetry").and_then(|p| p.as_table_mut()) {
-                if poetry.contains_key("version") {
-                    poetry["version"] = toml_edit::value(version.to_string());
-                    std::fs::write(manifest_path, doc.to_string())?;
-                    return Ok(());
-                }
-            }
+        if let Some(tool) = doc.get_mut("tool").and_then(|t| t.as_table_mut())
+            && let Some(poetry) = tool.get_mut("poetry").and_then(|p| p.as_table_mut())
+            && poetry.contains_key("version")
+        {
+            poetry["version"] = toml_edit::value(version.to_string());
+            std::fs::write(manifest_path, doc.to_string())?;
+            return Ok(());
         }
 
         Err(Error::PythonProjectNotFound(format!(
@@ -280,14 +279,14 @@ impl PythonAdapter {
             return Ok(None);
         };
 
-        if let Some(dynamic) = project.get("dynamic") {
-            if let Some(arr) = dynamic.as_array() {
-                for item in arr.iter() {
-                    if item.as_str() == Some("version") {
-                        return Err(Error::PythonDynamicVersion(
+        if let Some(dynamic) = project.get("dynamic")
+            && let Some(arr) = dynamic.as_array()
+        {
+            for item in arr.iter() {
+                if item.as_str() == Some("version") {
+                    return Err(Error::PythonDynamicVersion(
                             "Dynamic versions are not supported. Use a static version in [project].version".to_string(),
                         ));
-                    }
                 }
             }
         }
@@ -407,16 +406,15 @@ impl PythonAdapter {
     fn extract_dependencies(doc: &DocumentMut) -> Vec<String> {
         let mut deps = Vec::new();
 
-        if let Some(project) = doc.get("project") {
-            if let Some(dependencies) = project.get("dependencies") {
-                if let Some(arr) = dependencies.as_array() {
-                    for item in arr.iter() {
-                        if let Some(dep_str) = item.as_str() {
-                            if let Some(name) = Self::parse_dependency_name(dep_str) {
-                                deps.push(name);
-                            }
-                        }
-                    }
+        if let Some(project) = doc.get("project")
+            && let Some(dependencies) = project.get("dependencies")
+            && let Some(arr) = dependencies.as_array()
+        {
+            for item in arr.iter() {
+                if let Some(dep_str) = item.as_str()
+                    && let Some(name) = Self::parse_dependency_name(dep_str)
+                {
+                    deps.push(name);
                 }
             }
         }
@@ -475,11 +473,11 @@ impl PythonAdapter {
         let mut extras = String::new();
         let mut remaining = rest.trim_start();
 
-        if remaining.starts_with('[') {
-            if let Some(close) = remaining.find(']') {
-                extras = remaining[..=close].to_string();
-                remaining = remaining[close + 1..].trim_start();
-            }
+        if remaining.starts_with('[')
+            && let Some(close) = remaining.find(']')
+        {
+            extras = remaining[..=close].to_string();
+            remaining = remaining[close + 1..].trim_start();
         }
 
         if remaining.starts_with('@') {

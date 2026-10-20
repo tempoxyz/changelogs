@@ -136,10 +136,10 @@ fn parse_package_name(content: &str) -> Option<String> {
 fn read_version_from_content(content: &str) -> Option<Version> {
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(VERSION_COMMENT_PREFIX) {
-            if let Ok(version) = rest.trim().parse::<Version>() {
-                return Some(version);
-            }
+        if let Some(rest) = trimmed.strip_prefix(VERSION_COMMENT_PREFIX)
+            && let Ok(version) = rest.trim().parse::<Version>()
+        {
+            return Some(version);
         }
     }
     None

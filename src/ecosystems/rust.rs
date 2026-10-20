@@ -315,11 +315,11 @@ impl RustAdapter {
                 table.insert("version", new_version.to_string().into());
                 return true;
             }
-        } else if let Some(table) = dep.as_table_mut() {
-            if table.contains_key("version") {
-                table["version"] = toml_edit::value(new_version.to_string());
-                return true;
-            }
+        } else if let Some(table) = dep.as_table_mut()
+            && table.contains_key("version")
+        {
+            table["version"] = toml_edit::value(new_version.to_string());
+            return true;
         }
         false
     }

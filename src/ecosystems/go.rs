@@ -172,10 +172,10 @@ fn parse_module_path(go_mod: &str) -> Option<String> {
 fn read_version_from_content(content: &str) -> Option<Version> {
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(VERSION_COMMENT_PREFIX) {
-            if let Ok(v) = rest.trim().parse::<Version>() {
-                return Some(v);
-            }
+        if let Some(rest) = trimmed.strip_prefix(VERSION_COMMENT_PREFIX)
+            && let Ok(v) = rest.trim().parse::<Version>()
+        {
+            return Some(v);
         }
     }
     None
