@@ -7,7 +7,7 @@ repository = "https://github.com/wevm/changelogs-rs"
 description = "Manage versioning and changelogs for Cargo workspaces"
 keywords = ["changelog", "versioning", "monorepo", "cargo", "workspace"]
 categories = ["development-tools", "command-line-utilities"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 [[bin]]
 name = "changelogs"
