@@ -113,7 +113,7 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cargo/bin/changelogs
-        key: changelogs-${{ runner.os }}-${{ runner.arch }}-${{ steps.source.outputs.hash }}
+        key: changelogs-locked-${{ runner.os }}-${{ runner.arch }}-${{ steps.source.outputs.hash }}
 
     - name: Install changelogs
       if: steps.cache.outputs.cache-hit != 'true'
