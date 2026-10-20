@@ -118,7 +118,7 @@ runs:
     - name: Install changelogs
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: cargo install --path "${{ github.action_path }}"
+      run: cargo install --locked --path "${{ github.action_path }}"
 
     - name: Authenticate Git
       shell: bash
