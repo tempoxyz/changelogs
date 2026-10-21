@@ -84,11 +84,6 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Install Python build tools (for Python ecosystem)
-      if: inputs.ecosystem == 'python'
-      shell: bash
-      run: pip install build==1.2.2.post1 twine==7.0.0
-
     - name: Hash changelogs source
       id: source
       shell: bash
@@ -333,6 +328,14 @@ runs:
     #      API token by exchanging the GitHub OIDC ID token at PyPI's
     #      `_/oidc/mint-token` endpoint. Requires a configured Trusted
     #      Publisher on the PyPI project that matches the workflow.
+    # Only the publish step builds and uploads Python packages. Installing these
+    # on every run cost ~50s through package proxies even when the run only
+    # opened or updated the release PR.
+    - name: Install Python build tools (for Python ecosystem)
+      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && inputs.ecosystem == 'python'
+      shell: bash
+      run: pip install build==1.2.2.post1 twine==7.0.0
+
     # Run only for explicit Python publish workflows. Non-Python workflows can
     # also have GitHub OIDC enabled for their own registries, and must not try
     # to exchange that OIDC token with PyPI.
