@@ -292,7 +292,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '0 15 * * 2'
+    - cron: '0 15 * * 1'
 
 jobs:
   release:
