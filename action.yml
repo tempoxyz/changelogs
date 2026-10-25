@@ -36,6 +36,10 @@ inputs:
   post-version-command:
     description: 'Command to run after version bumps but before PR creation (e.g. refreshing lockfiles).'
     required: false
+  auto-merge:
+    description: 'Enable squash auto-merge on the version PR so it merges once required checks pass. Typically set only for scheduled runs.'
+    required: false
+    default: 'false'
   publish-mode:
     description: '"registry" (default) publishes to crates.io/PyPI when registry authentication is configured. "tags-only" intentionally skips registry authentication and only creates git tags + GitHub releases. When no registry authentication is configured, registry upload is skipped automatically.'
     required: false
@@ -310,6 +314,16 @@ runs:
         base: ${{ github.ref_name }}
         commit-message: ${{ inputs.commit || steps.version.outputs.commit-msg }}
         delete-branch: true
+
+    # Lets a scheduled run guarantee a release cadence: the version PR merges
+    # itself once required checks pass, and that merge triggers publish mode.
+    - name: Enable auto-merge
+      if: inputs.auto-merge == 'true' && steps.pr.outputs.pull-request-number != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+      run: gh pr merge "$PR_NUMBER" --auto --squash
 
     # Publish mode: Publish when no changelogs or stable-promotion PR are needed.
     # Will publish to registry if tokens provided, otherwise just creates git tags

@@ -280,6 +280,32 @@ When there are no pending changelog files but package versions are still
 prereleases, the action opens a stable-promotion PR instead of publishing
 immediately.
 
+### Scheduled Releases
+
+Use `auto-merge` with a `schedule` trigger to release at a regular cadence. On
+scheduled runs the version PR is set to squash auto-merge, so it merges once
+required checks pass and the resulting push publishes the packages. Weeks with
+no pending changelogs open no PR and release nothing.
+
+```yaml
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 15 * * 2'
+
+jobs:
+  release:
+    steps:
+      - uses: wevm/changelogs@master
+        with:
+          auto-merge: ${{ github.event_name == 'schedule' }}
+```
+
+The repository must allow auto-merge, and `github-token` must be able to merge
+pull requests. The built-in `GITHUB_TOKEN` cannot trigger the publish run on
+merge, so use a GitHub App token.
+
 ### Action Inputs
 
 | Input | Description | Default |
@@ -289,6 +315,7 @@ immediately.
 | `conventional-commit` | Use conventional commit format | `false` |
 | `prerelease` | Prerelease identifier for release candidates, such as `rc` | - |
 | `post-version-command` | Command to run after version bumps but before PR creation | - |
+| `auto-merge` | Enable squash auto-merge on the version PR so it merges once required checks pass | `false` |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
 | `publish-mode` | `"registry"` publishes to crates.io/PyPI (default). `"tags-only"` intentionally skips registry authentication; only git tags and GitHub releases are created. When no registry authentication is configured, registry upload is skipped automatically. | `registry` |
