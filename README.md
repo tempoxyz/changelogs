@@ -285,8 +285,8 @@ immediately.
 Use `auto-merge` with a `schedule` trigger to release at a regular cadence. On
 scheduled runs the version PR is set to squash auto-merge, so it merges once
 required checks pass and the resulting push publishes the packages. Weeks with
-no pending changelogs open no PR and release nothing. Stable-promotion PRs for
-prereleases are never auto-merged.
+no pending changelogs open no PR and release nothing. PRs that promote a
+prerelease to stable are never auto-merged.
 
 ```yaml
 on:

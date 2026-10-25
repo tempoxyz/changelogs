@@ -221,7 +221,14 @@ runs:
         semver_re='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?'
         all_versions=$(echo "$output" | grep -oE "[^[:space:]]+ $semver_re → $semver_re" | sed 's/ .* → /@/')
         count=$(echo "$all_versions" | grep -c . || true)
-        
+
+        # Promoting a prerelease to stable needs a human sign-off, so auto-merge skips these PRs.
+        promotes_prerelease=false
+        if echo "$output" | grep -oE "$semver_re → $semver_re" | grep -Eq -- '^[0-9]+\.[0-9]+\.[0-9]+-[^ ]* → [0-9]+\.[0-9]+\.[0-9]+(\+[^ ]*)?$'; then
+          promotes_prerelease=true
+        fi
+        echo "promotesPrerelease=$promotes_prerelease" >> $GITHUB_OUTPUT
+
         if [ "$changelog_format" = "root" ]; then
           # Root format uses the root package's version for the repository release.
           # Workspace discovery order is not guaranteed to put the root package first.
@@ -317,9 +324,9 @@ runs:
 
     # Lets a scheduled run guarantee a release cadence: the version PR merges
     # itself once required checks pass, and that merge triggers publish mode.
-    # Stable-promotion PRs (prereleases only) still need a manual merge.
+    # PRs that promote a prerelease to stable still need a manual merge.
     - name: Enable auto-merge
-      if: inputs.auto-merge == 'true' && steps.check.outputs.hasChangelogs == 'true' && steps.pr.outputs.pull-request-number != ''
+      if: inputs.auto-merge == 'true' && steps.version.outputs.promotesPrerelease != 'true' && steps.pr.outputs.pull-request-number != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
