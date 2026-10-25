@@ -280,6 +280,46 @@ When there are no pending changelog files but package versions are still
 prereleases, the action opens a stable-promotion PR instead of publishing
 immediately.
 
+### Scheduled Releases
+
+Use `auto-merge` with a `schedule` trigger to release at a regular cadence. On
+scheduled runs the version PR is set to squash auto-merge, so it merges once
+required checks pass and the resulting push publishes the packages. Weeks with
+no pending changelogs open no PR and release nothing. PRs that promote a
+prerelease to stable are never auto-merged.
+
+```yaml
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 15 * * 1'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: wevm/changelogs@master
+        with:
+          auto-merge: ${{ github.event_name == 'schedule' }}
+          github-token: ${{ steps.app-token.outputs.token }}
+```
+
+The repository must allow auto-merge and squash merging. `github-token` must be
+able to merge pull requests; the built-in `GITHUB_TOKEN` cannot trigger the
+publish run on merge, so use a GitHub App token. A PR whose checks have already
+passed is merged immediately. Once enabled, auto-merge stays on until the PR
+merges, so changelogs pushed after the scheduled run ship in the same release.
+
 ### Action Inputs
 
 | Input | Description | Default |
@@ -289,6 +329,7 @@ immediately.
 | `conventional-commit` | Use conventional commit format | `false` |
 | `prerelease` | Prerelease identifier for release candidates, such as `rc` | - |
 | `post-version-command` | Command to run after version bumps but before PR creation | - |
+| `auto-merge` | Enable squash auto-merge on the version PR so it merges once required checks pass | `false` |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
 | `publish-mode` | `"registry"` publishes to crates.io/PyPI (default). `"tags-only"` intentionally skips registry authentication; only git tags and GitHub releases are created. When no registry authentication is configured, registry upload is skipped automatically. | `registry` |
