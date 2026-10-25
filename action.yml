@@ -317,8 +317,9 @@ runs:
 
     # Lets a scheduled run guarantee a release cadence: the version PR merges
     # itself once required checks pass, and that merge triggers publish mode.
+    # Stable-promotion PRs (prereleases only) still need a manual merge.
     - name: Enable auto-merge
-      if: inputs.auto-merge == 'true' && steps.pr.outputs.pull-request-number != ''
+      if: inputs.auto-merge == 'true' && steps.check.outputs.hasChangelogs == 'true' && steps.pr.outputs.pull-request-number != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}

@@ -285,26 +285,40 @@ immediately.
 Use `auto-merge` with a `schedule` trigger to release at a regular cadence. On
 scheduled runs the version PR is set to squash auto-merge, so it merges once
 required checks pass and the resulting push publishes the packages. Weeks with
-no pending changelogs open no PR and release nothing.
+no pending changelogs open no PR and release nothing. Stable-promotion PRs for
+prereleases are never auto-merged.
 
 ```yaml
 on:
   push:
     branches: [main]
   schedule:
-    - cron: '0 15 * * 1'
+    - cron: '17 15 * * 1'
 
 jobs:
   release:
+    runs-on: ubuntu-latest
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
       - uses: wevm/changelogs@master
         with:
           auto-merge: ${{ github.event_name == 'schedule' }}
+          github-token: ${{ steps.app-token.outputs.token }}
 ```
 
-The repository must allow auto-merge, and `github-token` must be able to merge
-pull requests. The built-in `GITHUB_TOKEN` cannot trigger the publish run on
-merge, so use a GitHub App token.
+The repository must allow auto-merge and squash merging. `github-token` must be
+able to merge pull requests; the built-in `GITHUB_TOKEN` cannot trigger the
+publish run on merge, so use a GitHub App token. A PR whose checks have already
+passed is merged immediately. Once enabled, auto-merge stays on until the PR
+merges, so changelogs pushed after the scheduled run ship in the same release.
 
 ### Action Inputs
 
