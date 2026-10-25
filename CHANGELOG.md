@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.0 (2026-10-25)
+
+### Minor Changes
+
+- Add an `auto-merge` action input that enables squash auto-merge on the version PR, so scheduled release workflows can publish on a fixed cadence. (by @BrendanRyan, [#188](https://github.com/tempoxyz/changelogs/pull/188))
+
+### Patch Changes
+
+- Support Python packages using Core Metadata 2.5 by upgrading the pinned Twine publisher. (by @ParvAhuja, [#148](https://github.com/tempoxyz/changelogs/pull/148))
+- Raised minimum Rust version (MSRV) from 1.85 to 1.88. (by @DerekCofausper, [#184](https://github.com/tempoxyz/changelogs/pull/184))
+- Updated the CI release workflow to pass `--locked` to `cargo install`, ensuring the build uses the committed `Cargo.lock` file for reproducible installs. (by @DerekCofausper, [#183](https://github.com/tempoxyz/changelogs/pull/183))
+- The GitHub Action installs Python build tools only when it is about to publish, saving about 50s on runs that only open or update the release PR. (by @BrendanRyan, [#187](https://github.com/tempoxyz/changelogs/pull/187))
+- Use the committed lockfile when installing the GitHub Action binary. (by @DerekCofausper, [#185](https://github.com/tempoxyz/changelogs/pull/185))
+- Harden GitHub Actions jobs with secure runners and reusable dependency and workflow scans. (by @ShanedaSilva, [#162](https://github.com/tempoxyz/changelogs/pull/162))
+- Use system certificate authorities for PyPI and Go proxy release checks. (by @DerekCofausper, [#174](https://github.com/tempoxyz/changelogs/pull/174))
+- Use Tempo's vendored Peter Evans pull request action so release workflows comply with the organization action policy while preserving upstream behavior. (by @DerekCofausper, [#159](https://github.com/tempoxyz/changelogs/pull/159))
+
 ## 0.9.0 (2026-07-27)
 
 ### Minor Changes
