@@ -44,6 +44,10 @@ inputs:
     description: '"registry" (default) publishes to crates.io/PyPI when registry authentication is configured. "tags-only" intentionally skips registry authentication and only creates git tags + GitHub releases. When no registry authentication is configured, registry upload is skipped automatically.'
     required: false
     default: 'registry'
+  draft-releases:
+    description: 'Create GitHub releases as drafts, so a later job can attach assets before publishing them (required when the repository has immutable releases). The created tags are in the releaseTags output.'
+    required: false
+    default: 'false'
   github-token:
     description: 'GitHub token for creating PRs, pushing tags, and creating releases'
     required: false
@@ -62,6 +66,9 @@ outputs:
   publishedPackages:
     description: 'JSON array of published packages'
     value: ${{ steps.publish.outputs.publishedPackages }}
+  releaseTags:
+    description: 'JSON array of tags whose GitHub release this run created, or found still in draft'
+    value: ${{ steps.releases.outputs.releaseTags }}
 
 runs:
   using: 'composite'
@@ -439,23 +446,48 @@ runs:
           exit $publish_exit
         fi
 
+    # Run even when publish failed partway, so tags of packages that did reach
+    # the registry are not lost.
     - name: Push git tags
-      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outputs.published == 'true'
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-      run: git push --follow-tags
-
-    - name: Create GitHub releases
-      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'
+      if: always() && steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outputs.published == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
+        # Push explicit tag refs: --follow-tags needs a branch and fails on a detached HEAD.
+        refs=()
+        for tag in $(git tag --points-at HEAD); do
+          refs+=("refs/tags/$tag")
+        done
+        if [ ${#refs[@]} -eq 0 ]; then
+          echo "No tags at HEAD to push"
+          exit 0
+        fi
+        git push origin "${refs[@]}"
+
+    - name: Create GitHub releases
+      id: releases
+      if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'
+      shell: bash
+      env:
+        DRAFT_RELEASES: ${{ inputs.draft-releases }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        create_args=()
+        if [ "$DRAFT_RELEASES" = "true" ]; then
+          create_args+=(--draft)
+        fi
+        release_tags=()
+        failed_tags=()
+
         # Get tags that were just pushed
         for tag in $(git tag --points-at HEAD); do
-          if gh release view "$tag" >/dev/null 2>&1; then
+          if is_draft=$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null); then
             echo "GitHub release $tag already exists"
+            # A draft left by an earlier run still needs its assets and publishing.
+            if [ "$is_draft" = "true" ]; then
+              release_tags+=("$tag")
+            fi
             continue
           fi
           echo "Creating release for $tag"
@@ -552,9 +584,12 @@ runs:
           if [ -n "$previous_tag" ]; then
             generate_notes_args+=(-f previous_tag_name="$previous_tag")
           fi
-          github_notes=$(gh api repos/${{ github.repository }}/releases/generate-notes \
+          if ! github_notes=$(gh api repos/${{ github.repository }}/releases/generate-notes \
             "${generate_notes_args[@]}" \
-            --jq '.body' 2>/dev/null || echo "")
+            --jq '.body'); then
+            echo "::warning::Could not generate GitHub release notes for $tag; continuing without them"
+            github_notes=""
+          fi
           
           # Extract "What's Changed" body so we can re-include it for contributor attribution.
           # GitHub generates release page avatars from "by @username in #NNN" entries,
@@ -593,10 +628,20 @@ runs:
             if [ -n "$github_extras" ]; then
               notes="$notes"$'\n\n'"$github_extras"
             fi
-            echo "$notes" | gh release create "$tag" --notes-file - || true
-          elif [ -n "$github_notes" ]; then
-            echo "$github_notes" | gh release create "$tag" --notes-file - || true
           else
-            gh release create "$tag" --notes "" || true
+            notes="$github_notes"
+          fi
+          if echo "$notes" | gh release create "$tag" "${create_args[@]}" --notes-file -; then
+            release_tags+=("$tag")
+          else
+            echo "::error::Failed to create GitHub release for $tag"
+            failed_tags+=("$tag")
           fi
         done
+
+        printf '%s\n' "${release_tags[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))' | sed 's/^/releaseTags=/' >> "$GITHUB_OUTPUT"
+
+        if [ ${#failed_tags[@]} -gt 0 ]; then
+          echo "::error::Failed to create GitHub releases for: ${failed_tags[*]}"
+          exit 1
+        fi

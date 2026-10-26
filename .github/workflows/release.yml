@@ -8,7 +8,8 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never interrupt a publish: it would leave tags, registry uploads and releases half done.
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -33,9 +34,6 @@ jobs:
       - name: Install Rust
         uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
 
-      - name: Install changelogs
-        run: cargo install --locked --path .
-
       - name: Fetch GitHub token via STS
         id: app-token
         uses: tempoxyz/gh-actions/actions/github-sts@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
@@ -49,15 +47,21 @@ jobs:
           crate-token: ${{ secrets.CARGO_REGISTRY_TOKEN }} # zizmor: ignore[secrets-outside-env] Publishing is restricted to pushes on the protected master branch above.
           conventional-commit: true
           github-token: ${{ steps.app-token.outputs.token }}
+          # Releases are immutable once published, so binary.yml attaches the
+          # binaries to the drafts and then publishes them.
+          draft-releases: true
           # Keep Cargo.lock in sync with the bumped version so locked installs work.
           post-version-command: cargo metadata --format-version=1 > /dev/null
 
+      # Also run when a later action step failed, so drafts that were created
+      # still get their binaries and are published.
       - name: Build release binaries
-        if: steps.changelogs.outputs.published == 'true'
+        if: ${{ !cancelled() && steps.changelogs.outputs.releaseTags != '' && steps.changelogs.outputs.releaseTags != '[]' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAGS: ${{ steps.changelogs.outputs.releaseTags }}
         run: |
-          for tag in $(git tag --points-at HEAD); do
+          for tag in $(jq -r '.[]' <<< "$RELEASE_TAGS"); do
             gh workflow run binary.yml \
               --ref "$GITHUB_REF_NAME" \
               --field tag="$tag"
