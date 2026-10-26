@@ -1,13 +1,10 @@
 name: Binary Releases
 
 on:
-  push:
-    tags:
-      - 'changelogs@*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. changelogs@0.3.0)'
+        description: 'Release tag (e.g. v0.10.0). Its draft release is published once the binaries are attached.'
         required: true
 
 permissions: {}
@@ -28,6 +25,9 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset: changelogs-linux-amd64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: changelogs-linux-arm64
           - os: macos-latest
             target: x86_64-apple-darwin
             asset: changelogs-darwin-amd64
@@ -40,7 +40,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag }}
           persist-credentials: false
       - uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
         with:
@@ -48,7 +48,6 @@ jobs:
       - uses: tempoxyz/gh-actions/vendor/Swatinem/rust-cache@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
         with:
           key: ${{ matrix.target }}
-          save-if: ${{ github.event_name != 'push' }}
       - run: cargo build --release --target ${{ matrix.target }}
       - run: strip target/${{ matrix.target }}/release/changelogs
       - run: mv target/${{ matrix.target }}/release/changelogs ${{ matrix.asset }}
@@ -71,14 +70,28 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
+          # Only the binaries: the secure runner also uploads log artifacts.
+          pattern: changelogs-*
           merge-multiple: true
-      - uses: tempoxyz/gh-actions/actions/gh-release@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
-        with:
-          tag: ${{ inputs.tag || github.ref_name }}
-          files: artifacts/*
+      # Immutable releases reject new assets once published, so the release
+      # action creates a draft; attach the binaries, then publish it.
+      - name: Upload assets and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
+          if [ "$is_draft" != "true" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.immutable')" = "true" ]; then
+            echo "::warning::Release $TAG is already published and immutable, so its assets cannot change. Only the latest release is refreshed."
+            exit 0
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber artifacts/changelogs-*
+          if [ "$is_draft" = "true" ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          fi
       - uses: tempoxyz/gh-actions/actions/gh-release@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
         with:
           tag: latest
           prerelease: true
           files: artifacts/*
-          body: "Latest build from ${{ inputs.tag || github.ref_name }}. Updated on every release."
+          body: "Latest build from ${{ inputs.tag }}. Updated on every release."

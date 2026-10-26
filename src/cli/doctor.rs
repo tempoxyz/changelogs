@@ -263,6 +263,25 @@ pub fn run(ecosystem: Option<Ecosystem>) -> Result<()> {
     Ok(())
 }
 
+fn print_results(results: &[CheckResult]) {
+    for result in results {
+        result.print();
+    }
+
+    let passed = results.iter().filter(|r| r.is_pass()).count();
+    let failed = results.len() - passed;
+
+    println!();
+    if failed > 0 {
+        println!(
+            "{} {passed} passed, {failed} failed",
+            style("✗").red().bold()
+        );
+    } else {
+        println!("{} All {passed} checks passed", style("✓").green().bold());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,24 +371,5 @@ mod tests {
     fn test_check_git_remote_in_non_git_dir() {
         let result = check_git_remote();
         assert!(result.is_pass() || !result.is_pass());
-    }
-}
-
-fn print_results(results: &[CheckResult]) {
-    for result in results {
-        result.print();
-    }
-
-    let passed = results.iter().filter(|r| r.is_pass()).count();
-    let failed = results.len() - passed;
-
-    println!();
-    if failed > 0 {
-        println!(
-            "{} {passed} passed, {failed} failed",
-            style("✗").red().bold()
-        );
-    } else {
-        println!("{} All {passed} checks passed", style("✓").green().bold());
     }
 }

@@ -1,5 +1,5 @@
 use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult, SkipReason};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use cargo_metadata::MetadataCommand;
 use semver::Version;
 use std::collections::{HashMap, HashSet};
@@ -41,9 +41,13 @@ impl EcosystemAdapter for RustAdapter {
             return Ok(version_str.parse()?);
         }
 
-        let version_str = doc["package"]["version"].as_str().ok_or_else(|| {
-            crate::error::Error::VersionNotFound(manifest_path.display().to_string())
-        })?;
+        let version_str = doc
+            .get("package")
+            .and_then(|p| p.get("version"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                crate::error::Error::VersionNotFound(manifest_path.display().to_string())
+            })?;
 
         Ok(version_str.parse()?)
     }
@@ -104,19 +108,24 @@ impl EcosystemAdapter for RustAdapter {
     }
 
     fn is_published(name: &str, version: &Version) -> Result<bool> {
-        let output = Command::new("cargo")
-            .args(["search", "--limit", "1", name])
-            .output()?;
+        let base =
+            super::registry_base_url("CHANGELOGS_CRATES_INDEX_URL", "https://index.crates.io");
+        let url = format!("{}/{}", base, Self::sparse_index_path(name));
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut response = match super::registry_agent().get(&url).call() {
+            Ok(resp) => resp,
+            Err(ureq::Error::StatusCode(404)) => return Ok(false),
+            Err(e) => return Err(Error::CratesIoCheckFailed(e.to_string())),
+        };
 
-        let is_published_with_same_version = stdout
-            .lines()
-            .next()
-            .map(|line| line.contains(&format!("\"{}\"", version)))
-            .unwrap_or(false);
+        let index = response
+            .body_mut()
+            .with_config()
+            .limit(64 * 1024 * 1024)
+            .read_to_string()
+            .map_err(|e| Error::CratesIoCheckFailed(e.to_string()))?;
 
-        Ok(is_published_with_same_version)
+        Self::index_has_version(&index, version)
     }
 
     fn publish(pkg: &Package, dry_run: bool, registry: Option<&str>) -> Result<PublishResult> {
@@ -168,6 +177,30 @@ impl EcosystemAdapter for RustAdapter {
 }
 
 impl RustAdapter {
+    /// Path of a crate's file in the sparse index, e.g. `se/rd/serde`.
+    fn sparse_index_path(name: &str) -> String {
+        let name = name.to_lowercase();
+        match name.len() {
+            1 => format!("1/{name}"),
+            2 => format!("2/{name}"),
+            3 => format!("3/{}/{name}", &name[..1]),
+            _ => format!("{}/{}/{name}", &name[..2], &name[2..4]),
+        }
+    }
+
+    /// Whether a sparse index file (one JSON object per version) lists `version`.
+    fn index_has_version(index: &str, version: &Version) -> Result<bool> {
+        let version = version.to_string();
+        for line in index.lines().filter(|line| !line.trim().is_empty()) {
+            let entry: serde_json::Value = serde_json::from_str(line)
+                .map_err(|e| Error::CratesIoCheckFailed(format!("invalid index entry: {e}")))?;
+            if entry.get("vers").and_then(|v| v.as_str()) == Some(version.as_str()) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(crate) fn discover_with_private(root: &Path, private: &[String]) -> Result<Vec<Package>> {
         let metadata = MetadataCommand::new().current_dir(root).exec()?;
 
@@ -371,6 +404,25 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn sparse_index_path_follows_crates_io_layout() {
+        assert_eq!(RustAdapter::sparse_index_path("a"), "1/a");
+        assert_eq!(RustAdapter::sparse_index_path("ab"), "2/ab");
+        assert_eq!(RustAdapter::sparse_index_path("abc"), "3/a/abc");
+        assert_eq!(RustAdapter::sparse_index_path("Serde"), "se/rd/serde");
+    }
+
+    #[test]
+    fn index_has_version_matches_exact_version() {
+        let index = "{\"vers\":\"1.0.0\"}\n{\"vers\":\"1.1.0-rc.1\"}\n";
+        let has = |v: &str| RustAdapter::index_has_version(index, &v.parse().unwrap()).unwrap();
+
+        assert!(has("1.0.0"));
+        assert!(has("1.1.0-rc.1"));
+        assert!(!has("1.1.0"));
+        assert!(RustAdapter::index_has_version("not json", &Version::new(1, 0, 0)).is_err());
+    }
+
+    #[test]
     fn test_read_version() {
         let dir = TempDir::new().unwrap();
         let manifest = dir.path().join("Cargo.toml");
@@ -385,13 +437,22 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "index not found")]
     fn test_read_version_missing_version() {
         let dir = TempDir::new().unwrap();
         let manifest = dir.path().join("Cargo.toml");
         std::fs::write(&manifest, "[package]\nname = \"test\"\n").unwrap();
 
-        let _ = RustAdapter::read_version(&manifest);
+        let err = RustAdapter::read_version(&manifest).unwrap_err();
+        assert!(matches!(err, crate::error::Error::VersionNotFound(_)));
+    }
+
+    #[test]
+    fn test_read_version_virtual_manifest() {
+        let dir = TempDir::new().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(&manifest, "[workspace]\nmembers = []\n").unwrap();
+
+        assert!(RustAdapter::read_version(&manifest).is_err());
     }
 
     #[test]

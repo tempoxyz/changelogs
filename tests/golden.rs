@@ -38,9 +38,10 @@ fn run_golden_test(fixture_name: &str) {
     let fixture = fixtures_root().join(fixture_name);
     let changelog_dir = fixture.join("changelog");
 
-    if !changelog_dir.exists() {
-        return;
-    }
+    assert!(
+        changelog_dir.exists(),
+        "fixture {fixture_name} missing changelog/ directory"
+    );
 
     let packages_toml = fixture.join("packages.toml");
     if !packages_toml.exists() {
@@ -110,6 +111,10 @@ fn run_golden_test(fixture_name: &str) {
         });
 
     if !has_changelog_golden && !should_bless() {
+        assert!(
+            releases_golden.exists(),
+            "fixture {fixture_name} has no expectations: add expected/releases.txt or a CHANGELOG golden (run with UPDATE_GOLDENS=1)"
+        );
         return;
     }
 
@@ -190,10 +195,10 @@ fn resolve_changelog_path(workspace: &Workspace, golden_name: &str, config: &Con
     }
 
     // Per-crate with multiple packages: golden file is named "<pkg>-CHANGELOG.md"
-    if let Some(pkg_name) = golden_name.strip_suffix("-CHANGELOG.md") {
-        if let Some(pkg) = workspace.packages.iter().find(|p| p.name == pkg_name) {
-            return pkg.path.join("CHANGELOG.md");
-        }
+    if let Some(pkg_name) = golden_name.strip_suffix("-CHANGELOG.md")
+        && let Some(pkg) = workspace.packages.iter().find(|p| p.name == pkg_name)
+    {
+        return pkg.path.join("CHANGELOG.md");
     }
 
     workspace.root.join(golden_name)

@@ -16,7 +16,7 @@ YM.    , MM    MM  8M   MM    MM    MM 8M       YM.    ,  MM YA.   ,A9 8M       
 
 echo "$BANNER"
 
-REPO="wevm/changelogs-rs"
+REPO="tempoxyz/changelogs"
 BINARY="changelogs"
 VERSION="${1:-latest}"
 
