@@ -5,12 +5,14 @@ use crate::error::Result;
 use crate::plan::PackageRelease;
 use crate::workspace::Workspace;
 use chrono::Utc;
+use semver::Version;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 
-fn get_github_url() -> Option<String> {
+fn get_github_url(dir: &Path) -> Option<String> {
     let output = Command::new("git")
+        .current_dir(dir)
         .args(["remote", "get-url", "origin"])
         .output()
         .ok()?;
@@ -53,7 +55,7 @@ pub fn generate_entry_with_date(
 ) -> String {
     let mut entry = format!("## {} ({})\n\n", release.new_version, date);
 
-    let github_url = get_github_url();
+    let github_url = get_github_url(changelog_dir);
 
     let mut major_changes = Vec::new();
     let mut minor_changes = Vec::new();
@@ -134,12 +136,7 @@ fn write_change_lines(entry: &mut String, change: &ChangeWithMeta) {
     let mut suffix_parts = Vec::new();
 
     if !change.authors.is_empty() {
-        let authors_str = change
-            .authors
-            .iter()
-            .map(|a| format!("@{}", a.replace(' ', "")))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let authors_str = change.authors.join(", ");
         suffix_parts.push(format!("by {}", authors_str));
     }
 
@@ -244,17 +241,23 @@ pub fn write_changelogs_with_date(
         ChangelogFormat::Root => {
             // Group releases by version so fixed-group packages sharing the same
             // version get a single heading instead of duplicate `## version` blocks.
-            let mut by_version: BTreeMap<String, Vec<&PackageRelease>> = BTreeMap::new();
+            // Releases without changelog entries (such as dependent bumps) get
+            // no heading of their own.
+            let mut by_version: BTreeMap<&Version, Vec<&PackageRelease>> = BTreeMap::new();
             for release in releases {
+                if release.changelog_ids.is_empty() {
+                    continue;
+                }
                 by_version
-                    .entry(release.new_version.to_string())
+                    .entry(&release.new_version)
                     .or_default()
                     .push(release);
             }
 
             let mut combined_entry = String::new();
 
-            for (version, group) in &by_version {
+            // Newest version first, matching how entries are prepended.
+            for (version, group) in by_version.iter().rev() {
                 if group.len() == 1 {
                     // Single release at this version — use existing per-package generation.
                     let entry = generate_entry_with_date(group[0], changelogs, changelog_dir, date);
@@ -264,7 +267,7 @@ pub fn write_changelogs_with_date(
                     // and deduplicate changelog entries that appear in multiple packages.
                     combined_entry.push_str(&format!("## {} ({})\n\n", version, date));
 
-                    let github_url = get_github_url();
+                    let github_url = get_github_url(&workspace.root);
 
                     let mut major_changes = Vec::new();
                     let mut minor_changes = Vec::new();
@@ -355,8 +358,10 @@ pub fn write_changelogs_with_date(
                 }
             }
 
-            let changelog_path = workspace.root.join("CHANGELOG.md");
-            update_changelog(&changelog_path, &combined_entry)?;
+            if !combined_entry.is_empty() {
+                let changelog_path = workspace.root.join("CHANGELOG.md");
+                update_changelog(&changelog_path, &combined_entry)?;
+            }
         }
     }
 
@@ -592,7 +597,7 @@ mod tests {
                 "https://github.com/example/repo/pull/123".to_string(),
                 "#123".to_string(),
             )),
-            authors: vec!["octocat".to_string()],
+            authors: vec!["@octocat".to_string()],
         };
         let mut output = String::new();
 
@@ -630,5 +635,92 @@ mod tests {
         assert!(!output.contains("### Major Changes"));
         assert!(!output.contains("### Minor Changes"));
         assert!(!output.contains("### Patch Changes"));
+    }
+
+    #[test]
+    fn test_root_format_orders_versions_newest_first_and_skips_empty() {
+        let dir = TempDir::new().unwrap();
+        let release = |name: &str, version: &str, ids: &[&str]| PackageRelease {
+            name: name.to_string(),
+            bump: BumpType::Major,
+            old_version: Version::new(0, 1, 0),
+            new_version: Version::parse(version).unwrap(),
+            changelog_ids: ids.iter().map(|id| id.to_string()).collect(),
+        };
+        let changelog = |id: &str, package: &str| Changelog {
+            id: id.to_string(),
+            summary: format!("change in {package}"),
+            releases: vec![Release {
+                package: package.to_string(),
+                bump: BumpType::Major,
+            }],
+            commit: None,
+        };
+        let releases = vec![
+            release("a", "1.0.0", &["c-a"]),
+            release("b", "10.0.0", &["c-b"]),
+            release("c", "2.0.0", &["c-c"]),
+            release("dependent", "3.0.0", &[]),
+        ];
+        let changelogs = vec![
+            changelog("c-a", "a"),
+            changelog("c-b", "b"),
+            changelog("c-c", "c"),
+        ];
+        let workspace = Workspace {
+            root: dir.path().to_path_buf(),
+            changelog_dir: dir.path().join(".changelog"),
+            packages: Vec::new(),
+            ecosystem: crate::ecosystems::Ecosystem::Rust,
+        };
+
+        write_changelogs_with_date(
+            &workspace,
+            &releases,
+            &changelogs,
+            ChangelogFormat::Root,
+            "2025-01-15",
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join("CHANGELOG.md")).unwrap();
+        let headings: Vec<&str> = content.lines().filter(|l| l.starts_with("## ")).collect();
+        assert_eq!(
+            headings,
+            vec![
+                "## 10.0.0 (2025-01-15)",
+                "## 2.0.0 (2025-01-15)",
+                "## 1.0.0 (2025-01-15)",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_root_format_without_entries_leaves_changelog_untouched() {
+        let dir = TempDir::new().unwrap();
+        let workspace = Workspace {
+            root: dir.path().to_path_buf(),
+            changelog_dir: dir.path().join(".changelog"),
+            packages: Vec::new(),
+            ecosystem: crate::ecosystems::Ecosystem::Rust,
+        };
+        let releases = vec![PackageRelease {
+            name: "dependent".to_string(),
+            bump: BumpType::Patch,
+            old_version: Version::new(1, 0, 0),
+            new_version: Version::new(1, 0, 1),
+            changelog_ids: Vec::new(),
+        }];
+
+        write_changelogs_with_date(
+            &workspace,
+            &releases,
+            &[],
+            ChangelogFormat::Root,
+            "2025-01-15",
+        )
+        .unwrap();
+
+        assert!(!dir.path().join("CHANGELOG.md").exists());
     }
 }

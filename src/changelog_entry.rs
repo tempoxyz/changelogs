@@ -78,20 +78,29 @@ pub fn parse(id: &str, content: &str) -> Result<Changelog> {
     let mut releases = Vec::new();
     if let serde_yaml::Value::Mapping(map) = frontmatter_value {
         for (key, value) in map {
-            if let (serde_yaml::Value::String(package), serde_yaml::Value::String(bump_str)) =
-                (key, value)
-            {
-                if package == "commit" {
-                    continue;
-                }
-                let bump: BumpType = bump_str.parse().map_err(|_| {
-                    Error::ChangelogParse(
-                        id.to_string(),
-                        format!("invalid bump type: {}", bump_str),
-                    )
-                })?;
-                releases.push(Release { package, bump });
+            let serde_yaml::Value::String(package) = key else {
+                return Err(Error::ChangelogParse(
+                    id.to_string(),
+                    format!("package name must be a string, got {}", yaml_repr(&key)),
+                ));
+            };
+            if package == "commit" {
+                continue;
             }
+            let serde_yaml::Value::String(bump_str) = value else {
+                return Err(Error::ChangelogParse(
+                    id.to_string(),
+                    format!(
+                        "invalid bump type for '{}': {} (expected major, minor or patch)",
+                        package,
+                        yaml_repr(&value)
+                    ),
+                ));
+            };
+            let bump: BumpType = bump_str.parse().map_err(|_| {
+                Error::ChangelogParse(id.to_string(), format!("invalid bump type: {}", bump_str))
+            })?;
+            releases.push(Release { package, bump });
         }
     }
 
@@ -101,6 +110,15 @@ pub fn parse(id: &str, content: &str) -> Result<Changelog> {
         releases,
         commit,
     })
+}
+
+fn yaml_repr(value: &serde_yaml::Value) -> String {
+    match value {
+        serde_yaml::Value::Null => "null".to_string(),
+        other => serde_yaml::to_string(other)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| format!("{:?}", other)),
+    }
 }
 
 pub fn serialize(changelog: &Changelog) -> String {
@@ -118,21 +136,31 @@ pub struct CommitInfo {
     pub authors: Vec<String>,
 }
 
-pub fn get_commit_info(_changelog_dir: &Path, id: &str) -> Option<CommitInfo> {
-    let file_path = format!(".changelog/{}.md", id);
+pub fn get_commit_info(changelog_dir: &Path, id: &str) -> Option<CommitInfo> {
+    // Run git from the workspace root that holds the changelog directory, not
+    // from the process's current directory.
+    let changelog_dir = std::fs::canonicalize(changelog_dir).ok()?;
+    let repo_dir = changelog_dir.parent().unwrap_or(&changelog_dir);
+    let file_path = changelog_dir.join(format!("{}.md", id));
+    let file_path = file_path.to_str()?;
+    let git = || {
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(repo_dir);
+        cmd
+    };
 
     // Step 1: Find the commit that originally added the file
-    let add_commit = find_add_commit(&file_path)?;
+    let add_commit = find_add_commit(git(), file_path)?;
 
     // Step 2: Check if the add commit itself has a PR number (squash merge case)
     // For squash merges, the commit message contains "(#123)"
-    let output = std::process::Command::new("git")
+    let output = git()
         .args(["log", "--format=%s", "-1", &add_commit])
         .output()
         .ok()?;
 
     let commit_message = String::from_utf8_lossy(&output.stdout);
-    let authors = get_commit_authors(&file_path, &add_commit);
+    let authors = get_commit_authors(git, file_path, &add_commit);
 
     if let Some(pr_number) = extract_pr_number(commit_message.trim()) {
         return Some(CommitInfo {
@@ -144,7 +172,7 @@ pub fn get_commit_info(_changelog_dir: &Path, id: &str) -> Option<CommitInfo> {
 
     // Step 3: Look for merge commit (traditional merge case)
     // Find the first merge commit that contains the add commit
-    let merge_output = std::process::Command::new("git")
+    let merge_output = git()
         .args([
             "log",
             "--merges",
@@ -184,8 +212,8 @@ pub fn get_commit_info(_changelog_dir: &Path, id: &str) -> Option<CommitInfo> {
     })
 }
 
-fn find_add_commit(file_path: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
+fn find_add_commit(mut git: std::process::Command, file_path: &str) -> Option<String> {
+    let output = git
         .args([
             "log",
             "--follow",
@@ -207,14 +235,18 @@ fn find_add_commit(file_path: &str) -> Option<String> {
     }
 }
 
-fn get_commit_authors(file_path: &str, add_commit: &str) -> Vec<String> {
+fn get_commit_authors(
+    git: impl Fn() -> std::process::Command,
+    file_path: &str,
+    add_commit: &str,
+) -> Vec<String> {
     // Get authors from the add commit and any commits that touched the file
     // up to that point (for PRs with multiple commits before squash/merge)
-    let output = std::process::Command::new("git")
+    let output = git()
         .args([
             "log",
             "--follow",
-            "--format=%aN",
+            "--format=%aN%x00%aE",
             &format!("{}^..{}", add_commit, add_commit),
             "--",
             file_path,
@@ -227,31 +259,57 @@ fn get_commit_authors(file_path: &str, add_commit: &str) -> Vec<String> {
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut authors: Vec<String> = stdout
-        .lines()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let mut authors: Vec<String> = stdout.lines().filter_map(parse_author_line).collect();
 
     // If no authors found with range, try just the add commit
     if authors.is_empty() {
-        let fallback = std::process::Command::new("git")
-            .args(["log", "--format=%aN", "-1", add_commit])
+        let fallback = git()
+            .args(["log", "--format=%aN%x00%aE", "-1", add_commit])
             .output()
             .ok();
 
         if let Some(fb_output) = fallback {
             let fb_stdout = String::from_utf8_lossy(&fb_output.stdout);
-            let author = fb_stdout.trim();
-            if !author.is_empty() {
-                authors.push(author.to_string());
-            }
+            authors.extend(fb_stdout.lines().filter_map(parse_author_line));
         }
     }
 
     authors.sort();
     authors.dedup();
     authors
+}
+
+/// Parse a `name\0email` line from git into the author as rendered in the
+/// changelog.
+fn parse_author_line(line: &str) -> Option<String> {
+    let (name, email) = line.split_once('\0').unwrap_or((line, ""));
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(format_author(name, email.trim()))
+}
+
+/// Render an author: `@login` when the email is a GitHub noreply address
+/// (`<id>+login@users.noreply.github.com` or `login@users.noreply.github.com`),
+/// otherwise the plain name, since a display name is not a GitHub login.
+pub fn format_author(name: &str, email: &str) -> String {
+    match github_login_from_email(email) {
+        Some(login) => format!("@{}", login),
+        None => name.to_string(),
+    }
+}
+
+fn github_login_from_email(email: &str) -> Option<&str> {
+    let local = email
+        .strip_suffix("@users.noreply.github.com")
+        .filter(|local| !local.is_empty())?;
+    let login = local.split_once('+').map_or(local, |(_, login)| login);
+    let valid = !login.is_empty()
+        && login
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '[' | ']'));
+    valid.then_some(login)
 }
 
 fn extract_pr_number(message: &str) -> Option<u32> {
@@ -376,11 +434,77 @@ Fixed bug Y.
 
     #[test]
     fn test_parse_non_string_yaml_values() {
-        let content = "---\nmy-crate: 123\n---\nsummary";
-        let result = parse("test-id", content);
-        assert!(result.is_ok());
-        let changelog = result.unwrap();
-        assert!(changelog.releases.is_empty());
+        for value in ["123", "null", "~", "true", "", "[patch]"] {
+            let content = format!("---\nmy-crate: {value}\n---\nsummary");
+            match parse("test-id", &content).unwrap_err() {
+                Error::ChangelogParse(id, msg) => {
+                    assert_eq!(id, "test-id");
+                    assert!(msg.contains("invalid bump type for 'my-crate'"), "{msg}");
+                }
+                other => panic!("expected ChangelogParse error, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_non_string_commit_is_ignored() {
+        let content = "---\ncommit: 123\nmy-crate: patch\n---\nsummary";
+        let changelog = parse("test-id", content).unwrap();
+        assert_eq!(changelog.commit, None);
+        assert_eq!(changelog.releases.len(), 1);
+    }
+
+    #[test]
+    fn test_format_author() {
+        let cases = [
+            (
+                "Jane Doe",
+                "12345+octocat@users.noreply.github.com",
+                "@octocat",
+            ),
+            ("Jane Doe", "octocat@users.noreply.github.com", "@octocat"),
+            (
+                "dependabot[bot]",
+                "49699333+dependabot[bot]@users.noreply.github.com",
+                "@dependabot[bot]",
+            ),
+            ("Jane Doe", "jane@example.com", "Jane Doe"),
+            ("octocat", "", "octocat"),
+            ("Jane Doe", "@users.noreply.github.com", "Jane Doe"),
+        ];
+        for (name, email, expected) in cases {
+            assert_eq!(format_author(name, email), expected, "{name} <{email}>");
+        }
+    }
+
+    #[test]
+    fn test_get_commit_info_uses_changelog_dir_repo() {
+        let run = |dir: &Path, args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .current_dir(dir)
+                .args(["-c", "user.name=Jane Doe"])
+                .args(["-c", "user.email=1+octocat@users.noreply.github.com"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(status.status.success(), "git {args:?} failed");
+        };
+        let repo = tempfile::tempdir().unwrap();
+        let changelog_dir = repo.path().join(".changelog");
+        std::fs::create_dir_all(&changelog_dir).unwrap();
+        std::fs::write(
+            changelog_dir.join("brave-lions-dance.md"),
+            "---\na: patch\n---\nx\n",
+        )
+        .unwrap();
+        run(repo.path(), &["init", "-q"]);
+        run(repo.path(), &["add", "."]);
+        run(repo.path(), &["commit", "-q", "-m", "fix: things (#42)"]);
+
+        // The process cwd is this crate, not the temp repo.
+        let info = get_commit_info(&changelog_dir, "brave-lions-dance").unwrap();
+        assert_eq!(info.pr_number, Some(42));
+        assert_eq!(info.authors, vec!["@octocat".to_string()]);
     }
 
     #[test]

@@ -27,6 +27,25 @@ pub fn run(dry_run: bool, prerelease: Option<String>, ecosystem: Option<Ecosyste
     let changelog_dir = workspace.changelog_dir();
     let changelogs = changelog_entry::read_all(&changelog_dir)?;
     let config = Config::load(&changelog_dir)?;
+    let unknown = plan::unknown_package_refs(&workspace, &changelogs, &config);
+    if !unknown.is_empty() {
+        let details = unknown
+            .iter()
+            .map(|(id, package)| {
+                format!(
+                    "  {} references unknown package '{}'",
+                    changelog_dir.join(format!("{}.md", id)).display(),
+                    package
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        anyhow::bail!(
+            "changelog entries reference packages that are not in the workspace (fix the entry or add the package to `ignore` in config):\n{}",
+            details
+        );
+    }
+
     let has_changelogs = !changelogs.is_empty();
     let release_plan = if has_changelogs {
         plan::assemble_with_prerelease(&workspace, changelogs.clone(), &config, prerelease.as_ref())

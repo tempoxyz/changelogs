@@ -58,26 +58,42 @@ pub fn bump_version(version: &Version, bump: BumpType) -> Version {
     }
 }
 
+/// The bump a prerelease cycle is heading towards: `2.0.0-rc1` is a major
+/// cycle, `1.3.0-rc1` a minor one and `1.3.1-rc1` a patch one.
+fn prerelease_cycle_bump(version: &Version) -> BumpType {
+    if version.minor == 0 && version.patch == 0 {
+        BumpType::Major
+    } else if version.patch == 0 {
+        BumpType::Minor
+    } else {
+        BumpType::Patch
+    }
+}
+
 pub fn bump_version_with_prerelease(
     version: &Version,
     bump: BumpType,
     prerelease: Option<&PrereleasePrefix>,
 ) -> Version {
+    let base = Version::new(version.major, version.minor, version.patch);
+    // A bump larger than the current prerelease cycle implies starts a new
+    // cycle (`1.3.0-rc1` + major => `2.0.0`), otherwise the cycle continues.
+    let starts_new_cycle = version.pre.is_empty() || bump > prerelease_cycle_bump(version);
+
     match prerelease {
         Some(prefix) => {
-            let mut next = if version.pre.is_empty() {
-                bump_version(version, bump)
+            if starts_new_cycle {
+                let mut next = bump_version(&base, bump);
+                next.pre = prefix.next(None);
+                next
             } else {
-                Version::new(version.major, version.minor, version.patch)
-            };
-            let current_pre = (!version.pre.is_empty()).then_some(&version.pre);
-            next.pre = prefix.next(current_pre);
-            next
+                let mut next = base;
+                next.pre = prefix.next(Some(&version.pre));
+                next
+            }
         }
-        None if !version.pre.is_empty() => {
-            Version::new(version.major, version.minor, version.patch)
-        }
-        None => bump_version(version, bump),
+        None if starts_new_cycle => bump_version(&base, bump),
+        None => base,
     }
 }
 
@@ -107,6 +123,28 @@ pub fn assemble_stable_promotions(workspace: &Workspace, config: &Config) -> Rel
         releases,
         warnings: Vec::new(),
     }
+}
+
+/// Packages referenced by changelog entries that are neither in the workspace
+/// nor listed in the config's `ignore`, as `(changelog id, package)` pairs.
+pub fn unknown_package_refs(
+    workspace: &Workspace,
+    changelogs: &[Changelog],
+    config: &Config,
+) -> Vec<(String, String)> {
+    changelogs
+        .iter()
+        .flat_map(|changelog| {
+            changelog
+                .releases
+                .iter()
+                .filter(|release| {
+                    !config.ignore.contains(&release.package)
+                        && workspace.get_package(&release.package).is_none()
+                })
+                .map(|release| (changelog.id.clone(), release.package.clone()))
+        })
+        .collect()
 }
 
 pub fn assemble_with_prerelease(
@@ -157,67 +195,79 @@ pub fn assemble_with_prerelease(
         }
     }
 
-    for members in &fixed_groups {
-        let max_bump = members
-            .iter()
-            .filter_map(|m| bump_map.get(m))
-            .max()
-            .copied();
+    let dependent_bump_type = match config.dependent_bump {
+        DependentBump::Patch => Some(BumpType::Patch),
+        DependentBump::Minor => Some(BumpType::Minor),
+        DependentBump::None => None,
+    };
 
-        if let Some(bump) = max_bump {
-            for member in members {
-                if !config.ignore.contains(member) {
-                    bump_map.insert(member.clone(), bump);
+    // Dependent bumps can pull a package into a fixed or linked group, and a
+    // group can raise a package whose dependents then need a bump, so apply
+    // all rules until the bump map stops changing. Bumps only ever grow, so
+    // this terminates.
+    loop {
+        let before = bump_map.clone();
+
+        if let Some(dependent_bump_type) = dependent_bump_type {
+            let changed_packages: Vec<String> = bump_map.keys().cloned().collect();
+
+            for pkg in changed_packages {
+                for dependent in graph.all_dependents(&pkg) {
+                    if config.ignore.contains(&dependent) {
+                        continue;
+                    }
+
+                    let current = bump_map.get(&dependent).copied();
+                    match current {
+                        Some(existing) if existing >= dependent_bump_type => {}
+                        _ => {
+                            bump_map.insert(dependent, dependent_bump_type);
+                        }
+                    }
                 }
             }
         }
-    }
 
-    for group in &config.linked {
-        let releasing: Vec<_> = group
-            .members
-            .iter()
-            .filter(|m| bump_map.contains_key(*m))
-            .collect();
-
-        if releasing.len() > 1 {
-            let max_bump = releasing
+        for members in &fixed_groups {
+            let max_bump = members
                 .iter()
-                .filter_map(|m| bump_map.get(*m))
+                .filter_map(|m| bump_map.get(m))
                 .max()
                 .copied();
 
             if let Some(bump) = max_bump {
-                for member in releasing {
-                    bump_map.insert(member.clone(), bump);
-                }
-            }
-        }
-    }
-
-    if config.dependent_bump != DependentBump::None {
-        let dependent_bump_type = match config.dependent_bump {
-            DependentBump::Patch => BumpType::Patch,
-            DependentBump::Minor => BumpType::Minor,
-            DependentBump::None => unreachable!(),
-        };
-
-        let changed_packages: Vec<String> = bump_map.keys().cloned().collect();
-
-        for pkg in changed_packages {
-            for dependent in graph.all_dependents(&pkg) {
-                if config.ignore.contains(&dependent) {
-                    continue;
-                }
-
-                let current = bump_map.get(&dependent).copied();
-                match current {
-                    Some(existing) if existing >= dependent_bump_type => {}
-                    _ => {
-                        bump_map.insert(dependent, dependent_bump_type);
+                for member in members {
+                    if !config.ignore.contains(member) {
+                        bump_map.insert(member.clone(), bump);
                     }
                 }
             }
+        }
+
+        for group in &config.linked {
+            let releasing: Vec<_> = group
+                .members
+                .iter()
+                .filter(|m| bump_map.contains_key(*m))
+                .collect();
+
+            if releasing.len() > 1 {
+                let max_bump = releasing
+                    .iter()
+                    .filter_map(|m| bump_map.get(*m))
+                    .max()
+                    .copied();
+
+                if let Some(bump) = max_bump {
+                    for member in releasing {
+                        bump_map.insert(member.clone(), bump);
+                    }
+                }
+            }
+        }
+
+        if bump_map == before {
+            break;
         }
     }
 
@@ -236,6 +286,22 @@ pub fn assemble_with_prerelease(
             });
         } else {
             warnings.push(format!("changelog references unknown package '{}'", name));
+        }
+    }
+
+    // Fixed groups always release on one version: the highest version any
+    // member ends up on, even when members start on different versions.
+    for members in &fixed_groups {
+        let Some(group_version) = releases
+            .iter()
+            .filter(|r| members.contains(&r.name))
+            .map(|r| r.new_version.clone())
+            .max()
+        else {
+            continue;
+        };
+        for release in releases.iter_mut().filter(|r| members.contains(&r.name)) {
+            release.new_version = group_version.clone();
         }
     }
 
@@ -649,5 +715,184 @@ mod tests {
         assert_eq!(plan.releases.len(), 1);
         assert_eq!(plan.releases[0].name, "a");
         assert!(plan.releases.iter().all(|r| r.name != "b"));
+    }
+
+    #[test]
+    fn test_prerelease_bump_table() {
+        let rc = PrereleasePrefix::new("rc").unwrap();
+        let cases = [
+            ("1.3.0", BumpType::Minor, "1.4.0-rc1"),
+            ("1.3.0-rc1", BumpType::Patch, "1.3.0-rc2"),
+            ("1.3.0-rc1", BumpType::Minor, "1.3.0-rc2"),
+            ("1.3.0-rc1", BumpType::Major, "2.0.0-rc1"),
+            ("1.3.1-rc1", BumpType::Patch, "1.3.1-rc2"),
+            ("1.3.1-rc1", BumpType::Minor, "1.4.0-rc1"),
+            ("1.3.1-rc2", BumpType::Major, "2.0.0-rc1"),
+            ("2.0.0-rc1", BumpType::Major, "2.0.0-rc2"),
+            ("2.0.0-rc1", BumpType::Patch, "2.0.0-rc2"),
+        ];
+
+        for (current, bump, expected) in cases {
+            let actual =
+                bump_version_with_prerelease(&Version::parse(current).unwrap(), bump, Some(&rc));
+            assert_eq!(
+                actual,
+                Version::parse(expected).unwrap(),
+                "{current} + {bump} with rc"
+            );
+        }
+    }
+
+    #[test]
+    fn test_stable_bump_on_prerelease_table() {
+        let cases = [
+            ("1.3.0-rc1", BumpType::Minor, "1.3.0"),
+            ("1.3.0-rc1", BumpType::Major, "2.0.0"),
+            ("1.3.1-rc1", BumpType::Minor, "1.4.0"),
+            ("2.0.0-rc3", BumpType::Major, "2.0.0"),
+        ];
+
+        for (current, bump, expected) in cases {
+            let actual =
+                bump_version_with_prerelease(&Version::parse(current).unwrap(), bump, None);
+            assert_eq!(
+                actual,
+                Version::parse(expected).unwrap(),
+                "{current} + {bump}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dependent_bump_into_fixed_group() {
+        // core changes; app depends on core and is fixed with cli, so cli must
+        // release with app even though nothing it depends on changed.
+        let ws = mock_workspace(vec![
+            mock_package("core", "1.0.0", vec![]),
+            mock_package("app", "1.0.0", vec!["core"]),
+            mock_package("cli", "1.0.0", vec![]),
+        ]);
+        let changelogs = vec![make_changelog(
+            "cl1",
+            vec![Release {
+                package: "core".to_string(),
+                bump: BumpType::Minor,
+            }],
+        )];
+        let config = Config {
+            fixed: vec![crate::config::FixedGroup {
+                members: vec!["app".to_string(), "cli".to_string()],
+            }],
+            ..Config::default()
+        };
+
+        let plan = assemble(&ws, changelogs, &config);
+
+        let versions: Vec<_> = plan
+            .releases
+            .iter()
+            .map(|r| (r.name.as_str(), r.new_version.to_string()))
+            .collect();
+        assert_eq!(
+            versions,
+            vec![
+                ("app", "1.0.1".to_string()),
+                ("cli", "1.0.1".to_string()),
+                ("core", "1.1.0".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_fixed_group_bump_triggers_dependents() {
+        // a changes, fixed group pulls in b, and c depends on b.
+        let ws = mock_workspace(vec![
+            mock_package("a", "1.0.0", vec![]),
+            mock_package("b", "1.0.0", vec![]),
+            mock_package("c", "1.0.0", vec!["b"]),
+        ]);
+        let changelogs = vec![make_changelog(
+            "cl1",
+            vec![Release {
+                package: "a".to_string(),
+                bump: BumpType::Minor,
+            }],
+        )];
+        let config = Config {
+            fixed: vec![crate::config::FixedGroup {
+                members: vec!["a".to_string(), "b".to_string()],
+            }],
+            ..Config::default()
+        };
+
+        let plan = assemble(&ws, changelogs, &config);
+
+        let c = plan.releases.iter().find(|r| r.name == "c").unwrap();
+        assert_eq!(c.new_version, Version::new(1, 0, 1));
+    }
+
+    #[test]
+    fn test_fixed_group_divergent_versions_share_highest() {
+        let ws = mock_workspace(vec![
+            mock_package("x", "1.0.0", vec![]),
+            mock_package("y", "1.4.2", vec![]),
+        ]);
+        let changelogs = vec![make_changelog(
+            "cl1",
+            vec![Release {
+                package: "x".to_string(),
+                bump: BumpType::Minor,
+            }],
+        )];
+        let config = Config {
+            dependent_bump: DependentBump::None,
+            fixed: vec![crate::config::FixedGroup {
+                members: vec!["x".to_string(), "y".to_string()],
+            }],
+            ..Config::default()
+        };
+
+        let plan = assemble(&ws, changelogs, &config);
+
+        assert_eq!(plan.releases.len(), 2);
+        for release in &plan.releases {
+            assert_eq!(
+                release.new_version,
+                Version::new(1, 5, 0),
+                "{}",
+                release.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_unknown_package_refs() {
+        let ws = mock_workspace(vec![mock_package("foo", "1.0.0", vec![])]);
+        let changelogs = vec![make_changelog(
+            "cl1",
+            vec![
+                Release {
+                    package: "foo".to_string(),
+                    bump: BumpType::Patch,
+                },
+                Release {
+                    package: "ghost".to_string(),
+                    bump: BumpType::Patch,
+                },
+                Release {
+                    package: "skipped".to_string(),
+                    bump: BumpType::Patch,
+                },
+            ],
+        )];
+        let config = Config {
+            ignore: vec!["skipped".to_string()],
+            ..Config::default()
+        };
+
+        assert_eq!(
+            unknown_package_refs(&ws, &changelogs, &config),
+            vec![("cl1".to_string(), "ghost".to_string())]
+        );
     }
 }

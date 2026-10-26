@@ -1,0 +1,4 @@
+dependent_bump = "none"
+
+[[fixed]]
+members = ["pkg-a", "pkg-b"]

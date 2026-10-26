@@ -69,17 +69,34 @@ fn run_golden_test(fixture_name: &str) {
         })
         .collect();
 
+    // Copy the entries out of this repository so commit lookups cannot find
+    // the fixture's own git history and make the output depend on it.
+    let tmp_changelog_dir = tmp.path().join(".changelog");
+    std::fs::create_dir_all(&tmp_changelog_dir).unwrap();
+    for entry in std::fs::read_dir(&changelog_dir).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), tmp_changelog_dir.join(entry.file_name())).unwrap();
+    }
+
     let workspace = Workspace {
         root: tmp.path().to_path_buf(),
-        changelog_dir: changelog_dir.clone(),
+        changelog_dir: tmp_changelog_dir.clone(),
         packages,
         ecosystem: Ecosystem::Rust,
     };
 
-    let changelogs = changelog_entry::read_all(&changelog_dir).unwrap();
+    let changelogs = changelog_entry::read_all(&tmp_changelog_dir).unwrap();
 
     let config = load_config(&fixture);
-    let release_plan = plan::assemble(&workspace, changelogs.clone(), &config);
+    let prerelease = load_options(&fixture)
+        .prerelease
+        .map(|prefix| plan::PrereleasePrefix::new(prefix).unwrap());
+    let release_plan = plan::assemble_with_prerelease(
+        &workspace,
+        changelogs.clone(),
+        &config,
+        prerelease.as_ref(),
+    );
 
     let expected_dir = fixture.join("expected");
     if !expected_dir.exists() {
@@ -214,6 +231,22 @@ fn load_config(fixture_dir: &Path) -> Config {
     }
 }
 
+/// Harness-only options read from the fixture's config.toml.
+#[derive(Deserialize, Default)]
+struct FixtureOptions {
+    /// Prerelease identifier, as passed to `changelogs version --prerelease`.
+    prerelease: Option<String>,
+}
+
+fn load_options(fixture_dir: &Path) -> FixtureOptions {
+    let config_path = fixture_dir.join("config.toml");
+    if config_path.exists() {
+        toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap()
+    } else {
+        FixtureOptions::default()
+    }
+}
+
 fn format_releases(releases: &[plan::PackageRelease]) -> String {
     releases
         .iter()
@@ -313,6 +346,21 @@ fn golden_root_fixed_group() {
 }
 
 #[test]
+fn golden_dependent_bump_into_fixed_group() {
+    run_golden_test("dependent-bump-into-fixed-group");
+}
+
+#[test]
+fn golden_fixed_group_divergent_versions() {
+    run_golden_test("fixed-group-divergent-versions");
+}
+
+#[test]
+fn golden_prerelease_major_on_rc() {
+    run_golden_test("prerelease-major-on-rc");
+}
+
+#[test]
 fn golden_invalid_frontmatter() {
     let fixture = fixtures_root().join("invalid-frontmatter");
     let changelog_dir = fixture.join("changelog");
@@ -321,4 +369,77 @@ fn golden_invalid_frontmatter() {
         result.is_err(),
         "expected parse error for invalid frontmatter"
     );
+}
+
+// ── CLI tests ───────────────────────────────────────────────────────
+
+/// A Rust workspace with one crate, `z-core`, and the given changelog entries.
+fn cli_workspace(entries: &[(&str, &str)]) -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"z-core\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("z-core/src")).unwrap();
+    std::fs::write(
+        root.join("z-core/Cargo.toml"),
+        "[package]\nname = \"z-core\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("z-core/src/lib.rs"), "").unwrap();
+    std::fs::create_dir_all(root.join(".changelog")).unwrap();
+    std::fs::write(
+        root.join(".changelog/config.toml"),
+        "ignore = [\"skipped\"]\n",
+    )
+    .unwrap();
+    for (id, content) in entries {
+        std::fs::write(root.join(format!(".changelog/{id}.md")), content).unwrap();
+    }
+    tmp
+}
+
+fn run_version(root: &Path) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_changelogs"))
+        .current_dir(root)
+        .arg("version")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn version_refuses_unknown_package_and_keeps_entries() {
+    let tmp = cli_workspace(&[
+        (
+            "good-entry",
+            "---\nz-core: patch\nskipped: patch\n---\n\nFix.\n",
+        ),
+        ("bad-entry", "---\nz-crore: patch\n---\n\nTypo.\n"),
+    ]);
+
+    let output = run_version(tmp.path());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "version should fail: {stderr}");
+    assert!(stderr.contains("bad-entry.md"), "{stderr}");
+    assert!(stderr.contains("z-crore"), "{stderr}");
+    assert!(!stderr.contains("good-entry"), "{stderr}");
+    assert!(tmp.path().join(".changelog/bad-entry.md").exists());
+    assert!(tmp.path().join(".changelog/good-entry.md").exists());
+    let manifest = std::fs::read_to_string(tmp.path().join("z-core/Cargo.toml")).unwrap();
+    assert!(manifest.contains("version = \"1.0.0\""));
+}
+
+#[test]
+fn version_refuses_invalid_bump_value_and_keeps_entries() {
+    let tmp = cli_workspace(&[("bad-entry", "---\nz-core: null\n---\n\nOops.\n")]);
+
+    let output = run_version(tmp.path());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "version should fail: {stderr}");
+    assert!(stderr.contains("bad-entry"), "{stderr}");
+    assert!(tmp.path().join(".changelog/bad-entry.md").exists());
 }
