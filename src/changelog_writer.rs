@@ -6,8 +6,8 @@ use crate::plan::PackageRelease;
 use crate::workspace::Workspace;
 use chrono::Utc;
 use semver::Version;
-use std::collections::{BTreeMap, HashSet};
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn get_github_url(dir: &Path) -> Option<String> {
@@ -32,10 +32,123 @@ fn get_github_url(dir: &Path) -> Option<String> {
     }
 }
 
-struct ChangeWithMeta {
-    summary: String,
+/// The link and authors shown after a change, from the commit that added its
+/// changelog entry.
+#[derive(Debug, Default)]
+struct ChangeMeta {
     link: Option<(String, String)>, // (url, display_text)
     authors: Vec<String>,
+}
+
+/// Looks up the commit, PR and authors of each changelog entry once: one
+/// `git remote` call per run and one commit lookup per entry, however many
+/// packages the entry releases.
+fn resolve_metadata<'a>(
+    changelog_dir: &Path,
+    ids: impl IntoIterator<Item = &'a str>,
+) -> HashMap<&'a str, ChangeMeta> {
+    let mut metadata = HashMap::new();
+    let mut ids = ids.into_iter().peekable();
+    if ids.peek().is_none() {
+        return metadata;
+    }
+    let Some(base) = get_github_url(changelog_dir) else {
+        return metadata;
+    };
+
+    for id in ids {
+        metadata.entry(id).or_insert_with(|| {
+            let Some(info) = changelog_entry::get_commit_info(changelog_dir, id) else {
+                return ChangeMeta::default();
+            };
+            let link = if let Some(pr) = info.pr_number {
+                (format!("{}/pull/{}", base, pr), format!("#{}", pr))
+            } else {
+                let short_sha = &info.commit_sha[..7.min(info.commit_sha.len())];
+                (
+                    format!("{}/commit/{}", base, short_sha),
+                    short_sha.to_string(),
+                )
+            };
+            ChangeMeta {
+                link: Some(link),
+                authors: info.authors,
+            }
+        });
+    }
+    metadata
+}
+
+/// The changelog entries a section lists, each with the bump it is listed under.
+type Changes<'a> = Vec<(BumpType, &'a Changelog)>;
+
+/// The entries of one package's release, under the bump each gives it.
+fn package_changes<'a>(release: &PackageRelease, changelogs: &'a [Changelog]) -> Changes<'a> {
+    changelogs
+        .iter()
+        .filter(|changelog| release.changelog_ids.contains(&changelog.id))
+        .flat_map(|changelog| {
+            changelog
+                .releases
+                .iter()
+                .filter(|rel| rel.package == release.name)
+                .map(move |rel| (rel.bump, changelog))
+        })
+        .collect()
+}
+
+/// The entries of releases sharing one version, each listed once under the
+/// highest bump it gives any package in the group.
+fn merged_changes<'a>(group: &[&PackageRelease], changelogs: &'a [Changelog]) -> Changes<'a> {
+    let mut seen_changelog_ids: HashSet<&str> = HashSet::new();
+    let mut changes = Vec::new();
+
+    for release in group {
+        for changelog in changelogs {
+            if !release.changelog_ids.contains(&changelog.id)
+                || !seen_changelog_ids.insert(&changelog.id)
+            {
+                continue;
+            }
+
+            let bump = group
+                .iter()
+                .filter(|r| r.changelog_ids.contains(&changelog.id))
+                .flat_map(|r| {
+                    changelog
+                        .releases
+                        .iter()
+                        .filter(|rel| rel.package == r.name)
+                        .map(|rel| rel.bump)
+                })
+                .max()
+                .unwrap_or(BumpType::Patch);
+            changes.push((bump, changelog));
+        }
+    }
+
+    changes
+}
+
+/// Appends the Major, Minor and Patch Changes subsections listing `changes`.
+fn render_changes(entry: &mut String, changes: &Changes, metadata: &HashMap<&str, ChangeMeta>) {
+    let no_meta = ChangeMeta::default();
+    for (bump, title) in [
+        (BumpType::Major, "### Major Changes\n\n"),
+        (BumpType::Minor, "### Minor Changes\n\n"),
+        (BumpType::Patch, "### Patch Changes\n\n"),
+    ] {
+        let mut listed = changes.iter().filter(|(b, _)| *b == bump).peekable();
+        if listed.peek().is_none() {
+            continue;
+        }
+        entry.push_str(title);
+        for (_, changelog) in listed {
+            let meta = metadata.get(changelog.id.as_str()).unwrap_or(&no_meta);
+            write_change_lines(entry, changelog.summary.trim(), meta);
+        }
+        entry.push('\n');
+    }
 }
 
 pub fn generate_entry(
@@ -53,94 +166,22 @@ pub fn generate_entry_with_date(
     changelog_dir: &Path,
     date: &str,
 ) -> String {
+    let changes = package_changes(release, changelogs);
+    let metadata = resolve_metadata(changelog_dir, changes.iter().map(|(_, c)| c.id.as_str()));
     let mut entry = format!("## {} ({})\n\n", release.new_version, date);
-
-    let github_url = get_github_url(changelog_dir);
-
-    let mut major_changes = Vec::new();
-    let mut minor_changes = Vec::new();
-    let mut patch_changes = Vec::new();
-
-    for changelog in changelogs {
-        if !release.changelog_ids.contains(&changelog.id) {
-            continue;
-        }
-
-        for rel in &changelog.releases {
-            if rel.package != release.name {
-                continue;
-            }
-
-            let summary = changelog.summary.trim().to_string();
-
-            let (link_info, authors) = github_url
-                .as_ref()
-                .and_then(|base| {
-                    let info = changelog_entry::get_commit_info(changelog_dir, &changelog.id)?;
-
-                    let link_info = if let Some(pr) = info.pr_number {
-                        Some((format!("{}/pull/{}", base, pr), format!("#{}", pr)))
-                    } else {
-                        let short_sha = &info.commit_sha[..7.min(info.commit_sha.len())];
-                        Some((
-                            format!("{}/commit/{}", base, short_sha),
-                            short_sha.to_string(),
-                        ))
-                    };
-
-                    Some((link_info, info.authors))
-                })
-                .unwrap_or((None, Vec::new()));
-
-            let change = ChangeWithMeta {
-                summary,
-                link: link_info,
-                authors,
-            };
-            match rel.bump {
-                BumpType::Major => major_changes.push(change),
-                BumpType::Minor => minor_changes.push(change),
-                BumpType::Patch => patch_changes.push(change),
-            }
-        }
-    }
-
-    if !major_changes.is_empty() {
-        entry.push_str("### Major Changes\n\n");
-        for change in major_changes {
-            write_change_lines(&mut entry, &change);
-        }
-        entry.push('\n');
-    }
-
-    if !minor_changes.is_empty() {
-        entry.push_str("### Minor Changes\n\n");
-        for change in minor_changes {
-            write_change_lines(&mut entry, &change);
-        }
-        entry.push('\n');
-    }
-
-    if !patch_changes.is_empty() {
-        entry.push_str("### Patch Changes\n\n");
-        for change in patch_changes {
-            write_change_lines(&mut entry, &change);
-        }
-        entry.push('\n');
-    }
-
+    render_changes(&mut entry, &changes, &metadata);
     entry
 }
 
-fn write_change_lines(entry: &mut String, change: &ChangeWithMeta) {
+fn write_change_lines(entry: &mut String, summary: &str, meta: &ChangeMeta) {
     let mut suffix_parts = Vec::new();
 
-    if !change.authors.is_empty() {
-        let authors_str = change.authors.join(", ");
+    if !meta.authors.is_empty() {
+        let authors_str = meta.authors.join(", ");
         suffix_parts.push(format!("by {}", authors_str));
     }
 
-    if let Some((ref url, ref display)) = change.link {
+    if let Some((ref url, ref display)) = meta.link {
         suffix_parts.push(format!("[{}]({})", display, url));
     }
 
@@ -150,7 +191,7 @@ fn write_change_lines(entry: &mut String, change: &ChangeWithMeta) {
         format!(" ({})", suffix_parts.join(", "))
     };
 
-    let lines: Vec<&str> = change.summary.lines().collect();
+    let lines: Vec<&str> = summary.lines().collect();
     let mut in_fence = false;
     for (i, line) in lines.iter().enumerate() {
         let is_last = i == lines.len() - 1;
@@ -220,21 +261,53 @@ pub fn write_changelogs_with_date(
     format: ChangelogFormat,
     date: &str,
 ) -> Result<()> {
-    let changelog_dir = &workspace.changelog_dir;
+    let sections = render_sections_with_date(workspace, releases, changelogs, format, date);
+    write_sections(&sections, format)
+}
+
+/// Renders the changelog sections `write_changelogs` would add, dated today.
+pub fn render_sections(
+    workspace: &Workspace,
+    releases: &[PackageRelease],
+    changelogs: &[Changelog],
+    format: ChangelogFormat,
+) -> Vec<Section> {
+    let date = Utc::now().format("%Y-%m-%d").to_string();
+    render_sections_with_date(workspace, releases, changelogs, format, &date)
+}
+
+/// A changelog section that `version` prepends to a CHANGELOG.md file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    /// The CHANGELOG.md file the section goes into.
+    pub path: PathBuf,
+    /// The packages whose release the section describes.
+    pub packages: Vec<String>,
+    /// The section's markdown, starting with its `## ` heading.
+    pub text: String,
+}
+
+/// Renders the changelog sections for `releases` without writing them.
+pub fn render_sections_with_date(
+    workspace: &Workspace,
+    releases: &[PackageRelease],
+    changelogs: &[Changelog],
+    format: ChangelogFormat,
+    date: &str,
+) -> Vec<Section> {
+    // Each section with its heading and the entries it lists.
+    let mut planned: Vec<(Section, Changes)> = Vec::new();
 
     match format {
         ChangelogFormat::PerCrate => {
             for release in releases {
                 if let Some(package) = workspace.get_package(&release.name) {
-                    let mut entry = format!("## `{}@{}`\n\n", release.name, release.new_version);
-                    let generated =
-                        generate_entry_with_date(release, changelogs, changelog_dir, date);
-                    let entry_body = generated.lines().skip(2).collect::<Vec<_>>().join("\n");
-                    entry.push_str(&entry_body);
-                    entry.push('\n');
-
-                    let changelog_path = package.path.join("CHANGELOG.md");
-                    update_changelog(&changelog_path, &entry)?;
+                    let section = Section {
+                        path: package.path.join("CHANGELOG.md"),
+                        packages: vec![release.name.clone()],
+                        text: format!("## `{}@{}`\n\n", release.name, release.new_version),
+                    };
+                    planned.push((section, package_changes(release, changelogs)));
                 }
             }
         }
@@ -254,118 +327,80 @@ pub fn write_changelogs_with_date(
                     .push(release);
             }
 
-            let mut combined_entry = String::new();
-
             // Newest version first, matching how entries are prepended.
             for (version, group) in by_version.iter().rev() {
-                if group.len() == 1 {
-                    // Single release at this version — use existing per-package generation.
-                    let entry = generate_entry_with_date(group[0], changelogs, changelog_dir, date);
-                    combined_entry.push_str(&entry);
+                // Multiple releases sharing a version merge into one heading
+                // and list each changelog entry once.
+                let changes = if group.len() == 1 {
+                    package_changes(group[0], changelogs)
                 } else {
-                    // Multiple releases share this version — merge into one heading
-                    // and deduplicate changelog entries that appear in multiple packages.
-                    combined_entry.push_str(&format!("## {} ({})\n\n", version, date));
-
-                    let github_url = get_github_url(&workspace.root);
-
-                    let mut major_changes = Vec::new();
-                    let mut minor_changes = Vec::new();
-                    let mut patch_changes = Vec::new();
-                    let mut seen_changelog_ids: HashSet<&str> = HashSet::new();
-
-                    for release in group {
-                        for changelog in changelogs {
-                            if !release.changelog_ids.contains(&changelog.id) {
-                                continue;
-                            }
-                            if !seen_changelog_ids.insert(&changelog.id) {
-                                continue;
-                            }
-
-                            // Find the highest bump level for this changelog across
-                            // all packages in the group.
-                            let bump = group
-                                .iter()
-                                .filter(|r| r.changelog_ids.contains(&changelog.id))
-                                .flat_map(|r| {
-                                    changelog
-                                        .releases
-                                        .iter()
-                                        .filter(|rel| rel.package == r.name)
-                                        .map(|rel| rel.bump)
-                                })
-                                .max()
-                                .unwrap_or(BumpType::Patch);
-
-                            let summary = changelog.summary.trim().to_string();
-
-                            let (link_info, authors) = github_url
-                                .as_ref()
-                                .and_then(|base| {
-                                    let info = changelog_entry::get_commit_info(
-                                        changelog_dir,
-                                        &changelog.id,
-                                    )?;
-                                    let link_info = if let Some(pr) = info.pr_number {
-                                        Some((format!("{}/pull/{}", base, pr), format!("#{}", pr)))
-                                    } else {
-                                        let short_sha =
-                                            &info.commit_sha[..7.min(info.commit_sha.len())];
-                                        Some((
-                                            format!("{}/commit/{}", base, short_sha),
-                                            short_sha.to_string(),
-                                        ))
-                                    };
-                                    Some((link_info, info.authors))
-                                })
-                                .unwrap_or((None, Vec::new()));
-
-                            let change = ChangeWithMeta {
-                                summary,
-                                link: link_info,
-                                authors,
-                            };
-                            match bump {
-                                BumpType::Major => major_changes.push(change),
-                                BumpType::Minor => minor_changes.push(change),
-                                BumpType::Patch => patch_changes.push(change),
-                            }
-                        }
-                    }
-
-                    if !major_changes.is_empty() {
-                        combined_entry.push_str("### Major Changes\n\n");
-                        for change in major_changes {
-                            write_change_lines(&mut combined_entry, &change);
-                        }
-                        combined_entry.push('\n');
-                    }
-                    if !minor_changes.is_empty() {
-                        combined_entry.push_str("### Minor Changes\n\n");
-                        for change in minor_changes {
-                            write_change_lines(&mut combined_entry, &change);
-                        }
-                        combined_entry.push('\n');
-                    }
-                    if !patch_changes.is_empty() {
-                        combined_entry.push_str("### Patch Changes\n\n");
-                        for change in patch_changes {
-                            write_change_lines(&mut combined_entry, &change);
-                        }
-                        combined_entry.push('\n');
-                    }
-                }
+                    merged_changes(group, changelogs)
+                };
+                let section = Section {
+                    path: workspace.root.join("CHANGELOG.md"),
+                    packages: group.iter().map(|release| release.name.clone()).collect(),
+                    text: format!("## {} ({})\n\n", version, date),
+                };
+                planned.push((section, changes));
             }
+        }
+    }
 
-            if !combined_entry.is_empty() {
-                let changelog_path = workspace.root.join("CHANGELOG.md");
-                update_changelog(&changelog_path, &combined_entry)?;
+    let metadata = resolve_metadata(
+        &workspace.changelog_dir(),
+        planned
+            .iter()
+            .flat_map(|(_, changes)| changes.iter().map(|(_, c)| c.id.as_str())),
+    );
+
+    planned
+        .into_iter()
+        .map(|(mut section, changes)| {
+            let heading_len = section.text.len();
+            render_changes(&mut section.text, &changes, &metadata);
+            if format == ChangelogFormat::PerCrate && section.text.len() == heading_len {
+                // A per-crate section without entries keeps its blank line.
+                section.text.push('\n');
+            }
+            section
+        })
+        .collect()
+}
+
+/// Prepends rendered sections to their CHANGELOG.md files.
+pub fn write_sections(sections: &[Section], format: ChangelogFormat) -> Result<()> {
+    match format {
+        ChangelogFormat::PerCrate => {
+            for section in sections {
+                update_changelog(&section.path, &section.text)?;
+            }
+        }
+        ChangelogFormat::Root => {
+            let combined_entry: String = sections.iter().map(|s| s.text.as_str()).collect();
+            if let Some(section) = sections.first() {
+                update_changelog(&section.path, &combined_entry)?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Returns the body of the CHANGELOG.md section for `version` (without its
+/// heading), matching both per-crate (`` ## `name@version` ``) and root
+/// (`## version (date)`) headings.
+pub fn find_section(content: &str, name: &str, version: &Version) -> Option<String> {
+    let per_crate = format!("## `{}@{}`", name, version);
+    let root = format!("## {}", version);
+    let mut lines = content.lines();
+    lines.find(|line| {
+        line.trim_end() == per_crate
+            || line.strip_prefix(&root).is_some_and(|rest| {
+                rest.is_empty() || rest.starts_with(' ') || rest.starts_with('(')
+            })
+    })?;
+    let body: Vec<&str> = lines.take_while(|line| !line.starts_with("## ")).collect();
+    Some(body.join("\n").trim().to_string())
 }
 
 #[cfg(test)]
@@ -590,9 +625,8 @@ mod tests {
 
     #[test]
     fn test_write_change_lines_keeps_diff_fence_in_list_item() {
-        let change = ChangeWithMeta {
-            summary: "Changed the configuration.\n```diff\n-old = true\n+new = true\n```"
-                .to_string(),
+        let summary = "Changed the configuration.\n```diff\n-old = true\n+new = true\n```";
+        let meta = ChangeMeta {
             link: Some((
                 "https://github.com/example/repo/pull/123".to_string(),
                 "#123".to_string(),
@@ -601,7 +635,7 @@ mod tests {
         };
         let mut output = String::new();
 
-        write_change_lines(&mut output, &change);
+        write_change_lines(&mut output, summary, &meta);
 
         assert_eq!(
             output,
@@ -669,9 +703,9 @@ mod tests {
         ];
         let workspace = Workspace {
             root: dir.path().to_path_buf(),
-            changelog_dir: dir.path().join(".changelog"),
             packages: Vec::new(),
             ecosystem: crate::ecosystems::Ecosystem::Rust,
+            config: Default::default(),
         };
 
         write_changelogs_with_date(
@@ -700,9 +734,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let workspace = Workspace {
             root: dir.path().to_path_buf(),
-            changelog_dir: dir.path().join(".changelog"),
             packages: Vec::new(),
             ecosystem: crate::ecosystems::Ecosystem::Rust,
+            config: Default::default(),
         };
         let releases = vec![PackageRelease {
             name: "dependent".to_string(),
@@ -722,5 +756,20 @@ mod tests {
         .unwrap();
 
         assert!(!dir.path().join("CHANGELOG.md").exists());
+    }
+
+    #[test]
+    fn find_section_matches_exact_release() {
+        let content = "# Changelog\n\n## 1.1.0-rc1 (2025-01-20)\n\n- rc\n\n## 1.1.0 (2025-01-15)\n\n- stable\n\n## `lib@0.2.0`\n\n### Patch Changes\n\n- lib fix\n\n## 1.0.0\n\n- old\n";
+        let section = |name, version: &str| find_section(content, name, &version.parse().unwrap());
+
+        assert_eq!(section("app", "1.1.0").as_deref(), Some("- stable"));
+        assert_eq!(section("app", "1.1.0-rc1").as_deref(), Some("- rc"));
+        assert_eq!(
+            section("lib", "0.2.0").as_deref(),
+            Some("### Patch Changes\n\n- lib fix")
+        );
+        assert_eq!(section("app", "1.0.0").as_deref(), Some("- old"));
+        assert_eq!(section("app", "2.0.0"), None);
     }
 }

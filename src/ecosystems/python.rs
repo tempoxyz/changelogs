@@ -1,7 +1,6 @@
 use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult, SkipReason};
 use crate::error::{Error, Result};
 use semver::Version;
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -298,6 +297,7 @@ impl PythonAdapter {
             path: root.to_path_buf(),
             manifest_path: pyproject_path.to_path_buf(),
             dependencies,
+            publishable: true,
         }))
     }
 
@@ -334,6 +334,7 @@ impl PythonAdapter {
             path: root.to_path_buf(),
             manifest_path: pyproject_path.to_path_buf(),
             dependencies,
+            publishable: true,
         }))
     }
 
@@ -510,19 +511,6 @@ impl PythonAdapter {
         };
 
         Some(format!("{}{}=={}{}", name, extras, new_version, marker))
-    }
-
-    pub fn update_all_dependency_versions(
-        packages: &[Package],
-        _root: &Path,
-        updates: &HashMap<String, Version>,
-    ) -> Result<()> {
-        for package in packages {
-            for (dep_name, new_version) in updates {
-                Self::update_dependency_version(&package.manifest_path, dep_name, new_version)?;
-            }
-        }
-        Ok(())
     }
 }
 

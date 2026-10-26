@@ -65,6 +65,7 @@ fn run_golden_test(fixture_name: &str) {
                 path: pkg_dir.clone(),
                 manifest_path: pkg_dir.join("Cargo.toml"),
                 dependencies: p.deps.clone(),
+                publishable: true,
             }
         })
         .collect();
@@ -78,16 +79,16 @@ fn run_golden_test(fixture_name: &str) {
         std::fs::copy(entry.path(), tmp_changelog_dir.join(entry.file_name())).unwrap();
     }
 
+    let config = load_config(&fixture);
     let workspace = Workspace {
         root: tmp.path().to_path_buf(),
-        changelog_dir: tmp_changelog_dir.clone(),
         packages,
         ecosystem: Ecosystem::Rust,
+        config: config.clone(),
     };
 
     let changelogs = changelog_entry::read_all(&tmp_changelog_dir).unwrap();
 
-    let config = load_config(&fixture);
     let prerelease = load_options(&fixture)
         .prerelease
         .map(|prefix| plan::PrereleasePrefix::new(prefix).unwrap());

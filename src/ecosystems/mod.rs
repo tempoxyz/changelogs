@@ -2,6 +2,7 @@ mod go;
 mod python;
 mod rust;
 mod swift;
+mod version_comment;
 
 pub use go::GoAdapter;
 pub use python::PythonAdapter;
@@ -93,6 +94,9 @@ pub struct Package {
     pub path: PathBuf,
     pub manifest_path: PathBuf,
     pub dependencies: Vec<String>,
+    /// Whether the package may go to a registry: false for Rust crates with
+    /// `publish = false` or `publish = []`.
+    pub publishable: bool,
 }
 
 /// Trait defining ecosystem-specific operations for package management.
@@ -146,6 +150,35 @@ pub trait EcosystemAdapter {
     {
         format!("{}@{}", pkg.name, pkg.version)
     }
+
+    /// Updates every package's dependencies on the packages in `updates`.
+    fn update_all_dependency_versions(
+        packages: &[Package],
+        _root: &Path,
+        updates: &HashMap<String, Version>,
+    ) -> Result<()>
+    where
+        Self: Sized,
+    {
+        for package in packages {
+            for (dep_name, new_version) in updates {
+                Self::update_dependency_version(&package.manifest_path, dep_name, new_version)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Calls `$adapter_fn` on the adapter of `$ecosystem`.
+macro_rules! dispatch {
+    ($ecosystem:expr, $adapter_fn:ident($($arg:expr),* $(,)?)) => {
+        match $ecosystem {
+            Ecosystem::Rust => RustAdapter::$adapter_fn($($arg),*),
+            Ecosystem::Python => PythonAdapter::$adapter_fn($($arg),*),
+            Ecosystem::Go => GoAdapter::$adapter_fn($($arg),*),
+            Ecosystem::Swift => SwiftAdapter::$adapter_fn($($arg),*),
+        }
+    };
 }
 
 pub fn detect_ecosystem(start: &Path) -> Option<Ecosystem> {
@@ -186,29 +219,12 @@ pub(crate) fn discover_packages_with_private(
     }
 }
 
-pub(crate) fn is_registry_publishable(ecosystem: Ecosystem, pkg: &Package) -> Result<bool> {
-    match ecosystem {
-        Ecosystem::Rust => RustAdapter::is_manifest_registry_publishable(&pkg.manifest_path),
-        Ecosystem::Python | Ecosystem::Go | Ecosystem::Swift => Ok(true),
-    }
-}
-
 pub fn read_version(ecosystem: Ecosystem, manifest_path: &Path) -> Result<Version> {
-    match ecosystem {
-        Ecosystem::Rust => RustAdapter::read_version(manifest_path),
-        Ecosystem::Python => PythonAdapter::read_version(manifest_path),
-        Ecosystem::Go => GoAdapter::read_version(manifest_path),
-        Ecosystem::Swift => SwiftAdapter::read_version(manifest_path),
-    }
+    dispatch!(ecosystem, read_version(manifest_path))
 }
 
 pub fn write_version(ecosystem: Ecosystem, manifest_path: &Path, version: &Version) -> Result<()> {
-    match ecosystem {
-        Ecosystem::Rust => RustAdapter::write_version(manifest_path, version),
-        Ecosystem::Python => PythonAdapter::write_version(manifest_path, version),
-        Ecosystem::Go => GoAdapter::write_version(manifest_path, version),
-        Ecosystem::Swift => SwiftAdapter::write_version(manifest_path, version),
-    }
+    dispatch!(ecosystem, write_version(manifest_path, version))
 }
 
 pub fn update_dependency_versions(
@@ -217,21 +233,14 @@ pub fn update_dependency_versions(
     root: &Path,
     updates: &HashMap<String, Version>,
 ) -> Result<()> {
-    match ecosystem {
-        Ecosystem::Rust => RustAdapter::update_all_dependency_versions(packages, root, updates),
-        Ecosystem::Python => PythonAdapter::update_all_dependency_versions(packages, root, updates),
-        Ecosystem::Go => GoAdapter::update_all_dependency_versions(packages, root, updates),
-        Ecosystem::Swift => SwiftAdapter::update_all_dependency_versions(packages, root, updates),
-    }
+    dispatch!(
+        ecosystem,
+        update_all_dependency_versions(packages, root, updates)
+    )
 }
 
 pub fn is_published(ecosystem: Ecosystem, name: &str, version: &Version) -> Result<bool> {
-    match ecosystem {
-        Ecosystem::Rust => RustAdapter::is_published(name, version),
-        Ecosystem::Python => PythonAdapter::is_published(name, version),
-        Ecosystem::Go => GoAdapter::is_published(name, version),
-        Ecosystem::Swift => SwiftAdapter::is_published(name, version),
-    }
+    dispatch!(ecosystem, is_published(name, version))
 }
 
 pub fn publish(
@@ -240,21 +249,17 @@ pub fn publish(
     dry_run: bool,
     registry: Option<&str>,
 ) -> Result<PublishResult> {
-    match ecosystem {
-        Ecosystem::Rust => RustAdapter::publish(pkg, dry_run, registry),
-        Ecosystem::Python => PythonAdapter::publish(pkg, dry_run, registry),
-        Ecosystem::Go => GoAdapter::publish(pkg, dry_run, registry),
-        Ecosystem::Swift => SwiftAdapter::publish(pkg, dry_run, registry),
-    }
+    dispatch!(ecosystem, publish(pkg, dry_run, registry))
 }
 
 pub fn tag_name(ecosystem: Ecosystem, pkg: &Package) -> String {
-    match ecosystem {
-        Ecosystem::Rust => RustAdapter::tag_name(pkg),
-        Ecosystem::Python => PythonAdapter::tag_name(pkg),
-        Ecosystem::Go => GoAdapter::tag_name(pkg),
-        Ecosystem::Swift => SwiftAdapter::tag_name(pkg),
-    }
+    dispatch!(ecosystem, tag_name(pkg))
+}
+
+/// The `v{version}` tag of a whole-repository release: root-format releases
+/// and the Go and Swift packages, whose versions are their tags.
+pub fn root_tag_name(version: &Version) -> String {
+    format!("v{version}")
 }
 
 /// Returns whether `refs/tags/{tag}` exists in the git repository at `dir`.

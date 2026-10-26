@@ -8,9 +8,10 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf,
-    pub changelog_dir: PathBuf,
     pub packages: Vec<Package>,
     pub ecosystem: Ecosystem,
+    /// The workspace's `.changelog/config.toml`, loaded once at discovery.
+    pub config: Config,
 }
 
 pub type WorkspacePackage = Package;
@@ -31,8 +32,7 @@ impl Workspace {
             .ok_or(Error::NotInWorkspace)?;
 
         let root = Self::find_root(cwd, ecosystem)?;
-        let changelog_dir = root.join(".changelog");
-        let config = Config::load(&changelog_dir)?;
+        let config = Config::load(&root.join(".changelog"))?;
         let packages =
             ecosystems::discover_packages_with_private(ecosystem, &root, &config.private)?;
 
@@ -42,9 +42,9 @@ impl Workspace {
 
         Ok(Workspace {
             root,
-            changelog_dir,
             packages,
             ecosystem,
+            config,
         })
     }
 
@@ -109,12 +109,11 @@ impl Workspace {
     }
 
     pub fn get_publishable_packages(&self) -> Result<Vec<&Package>> {
-        let config = Config::load(&self.changelog_dir)?;
         let mut publishable = Vec::new();
 
         for pkg in &self.packages {
-            let private = self.is_private_package(pkg, &config)?;
-            if self.release_is_tagged(pkg, &config, private) {
+            let private = self.is_private_package(pkg);
+            if self.release_is_tagged(pkg, private) {
                 continue;
             }
 
@@ -163,8 +162,7 @@ impl Workspace {
         dry_run: bool,
         registry: Option<&str>,
     ) -> Result<PublishResult> {
-        let config = Config::load(&self.changelog_dir)?;
-        if self.ecosystem == Ecosystem::Rust && config.private.contains(&pkg.name) {
+        if self.ecosystem == Ecosystem::Rust && self.config.private.contains(&pkg.name) {
             return Ok(PublishResult::Skipped(
                 crate::ecosystems::SkipReason::NotPublishable,
             ));
@@ -177,20 +175,22 @@ impl Workspace {
         ecosystems::tag_name(self.ecosystem, pkg)
     }
 
+    /// The tag `publish` creates for `pkg`'s release: the unified `v{version}`
+    /// tag in root format, the package's own tag otherwise.
+    pub fn release_tag(&self, pkg: &Package) -> String {
+        match (self.config.changelog.format, self.unified_package()) {
+            (ChangelogFormat::Root, Some(unified)) => ecosystems::root_tag_name(&unified.version),
+            _ => self.tag_name(pkg),
+        }
+    }
+
     pub fn tag_exists(&self, tag: &str) -> bool {
         ecosystems::git_tag_exists(&self.root, tag)
     }
 
-    fn is_private_package(&self, pkg: &Package, config: &Config) -> Result<bool> {
-        if self.ecosystem != Ecosystem::Rust {
-            return Ok(false);
-        }
-
-        if config.private.contains(&pkg.name) {
-            return Ok(true);
-        }
-
-        Ok(!ecosystems::is_registry_publishable(self.ecosystem, pkg)?)
+    fn is_private_package(&self, pkg: &Package) -> bool {
+        self.ecosystem == Ecosystem::Rust
+            && (self.config.private.contains(&pkg.name) || !pkg.publishable)
     }
 
     /// Whether this package version's release tag already exists, so a rerun
@@ -198,8 +198,8 @@ impl Workspace {
     ///
     /// In root format the unified `v{version}` tag covers private packages and
     /// the unified package itself; other public packages rely on the registry.
-    fn release_is_tagged(&self, pkg: &Package, config: &Config, private: bool) -> bool {
-        let tag = if config.changelog.format == ChangelogFormat::Root {
+    fn release_is_tagged(&self, pkg: &Package, private: bool) -> bool {
+        let tag = if self.config.changelog.format == ChangelogFormat::Root {
             let unified = self.unified_package().unwrap_or(pkg);
             if !private && unified.name != pkg.name {
                 return false;
@@ -207,7 +207,7 @@ impl Workspace {
             if private && unified.version == Version::new(0, 0, 0) {
                 return true;
             }
-            format!("v{}", unified.version)
+            ecosystems::root_tag_name(&unified.version)
         } else {
             if private && pkg.version == Version::new(0, 0, 0) {
                 return true;
@@ -244,16 +244,23 @@ mod tests {
             path: PathBuf::from(format!("/fake/{name}")),
             manifest_path: PathBuf::from(format!("/fake/{name}/Cargo.toml")),
             dependencies: vec![],
+            publishable: true,
         }
     }
 
     fn make_workspace(root: PathBuf, packages: Vec<Package>) -> Workspace {
-        let changelog_dir = root.join(".changelog");
         Workspace {
             root,
-            changelog_dir,
             packages,
             ecosystem: Ecosystem::Rust,
+            config: Config::default(),
+        }
+    }
+
+    fn private_tool_config() -> Config {
+        Config {
+            private: vec!["private-tool".into()],
+            ..Default::default()
         }
     }
 
@@ -352,26 +359,17 @@ publish = false
             path: dir.path().to_path_buf(),
             ..make_package("private-tool")
         };
-        let workspace = make_workspace(dir.path().to_path_buf(), vec![pkg.clone()]);
-        let config = Config {
-            private: vec!["private-tool".into()],
-            ..Default::default()
+        let workspace = Workspace {
+            config: private_tool_config(),
+            ..make_workspace(dir.path().to_path_buf(), vec![pkg.clone()])
         };
 
-        assert!(workspace.is_private_package(&pkg, &config).unwrap());
+        assert!(workspace.is_private_package(&pkg));
     }
 
     #[test]
     fn test_private_config_skips_registry_publish() {
         let dir = TempDir::new().unwrap();
-        let changelog_dir = dir.path().join(".changelog");
-        std::fs::create_dir(&changelog_dir).unwrap();
-        Config {
-            private: vec!["private-tool".into()],
-            ..Default::default()
-        }
-        .save(&changelog_dir)
-        .unwrap();
         let manifest = dir.path().join("Cargo.toml");
         std::fs::write(
             &manifest,
@@ -383,7 +381,10 @@ publish = false
             path: dir.path().to_path_buf(),
             ..make_package("private-tool")
         };
-        let workspace = make_workspace(dir.path().to_path_buf(), vec![pkg.clone()]);
+        let workspace = Workspace {
+            config: private_tool_config(),
+            ..make_workspace(dir.path().to_path_buf(), vec![pkg.clone()])
+        };
 
         assert_eq!(
             workspace.publish_package(&pkg, true, None).unwrap(),
@@ -394,17 +395,6 @@ publish = false
     #[test]
     fn test_private_tagged_package_is_not_publishable() {
         let dir = TempDir::new().unwrap();
-        let changelog_dir = dir.path().join(".changelog");
-        std::fs::create_dir(&changelog_dir).unwrap();
-        Config {
-            changelog: crate::config::ChangelogConfig {
-                format: ChangelogFormat::Root,
-            },
-            private: vec!["private-tool".into()],
-            ..Default::default()
-        }
-        .save(&changelog_dir)
-        .unwrap();
         let manifest = dir.path().join("Cargo.toml");
         std::fs::write(
             &manifest,
@@ -414,9 +404,18 @@ publish = false
         let pkg = Package {
             manifest_path: manifest,
             path: dir.path().to_path_buf(),
+            publishable: false,
             ..make_package("private-tool")
         };
-        let workspace = make_workspace(dir.path().to_path_buf(), vec![pkg]);
+        let workspace = Workspace {
+            config: Config {
+                changelog: crate::config::ChangelogConfig {
+                    format: ChangelogFormat::Root,
+                },
+                ..private_tool_config()
+            },
+            ..make_workspace(dir.path().to_path_buf(), vec![pkg])
+        };
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
         run_git(
@@ -433,14 +432,6 @@ publish = false
     #[test]
     fn test_private_config_preserves_swift_bootstrap_guard() {
         let dir = TempDir::new().unwrap();
-        let changelog_dir = dir.path().join(".changelog");
-        std::fs::create_dir(&changelog_dir).unwrap();
-        Config {
-            private: vec!["private-tool".into()],
-            ..Default::default()
-        }
-        .save(&changelog_dir)
-        .unwrap();
         let pkg = Package {
             manifest_path: dir.path().join("Package.swift"),
             path: dir.path().to_path_buf(),
@@ -449,6 +440,7 @@ publish = false
         };
         let workspace = Workspace {
             ecosystem: Ecosystem::Swift,
+            config: private_tool_config(),
             ..make_workspace(dir.path().to_path_buf(), vec![pkg])
         };
 
@@ -458,21 +450,16 @@ publish = false
     #[test]
     fn test_private_rust_package_preserves_bootstrap_guard() {
         let dir = TempDir::new().unwrap();
-        let changelog_dir = dir.path().join(".changelog");
-        std::fs::create_dir(&changelog_dir).unwrap();
-        Config {
-            private: vec!["private-tool".into()],
-            ..Default::default()
-        }
-        .save(&changelog_dir)
-        .unwrap();
         let pkg = Package {
             manifest_path: dir.path().join("Cargo.toml"),
             path: dir.path().to_path_buf(),
             version: Version::new(0, 0, 0),
             ..make_package("private-tool")
         };
-        let workspace = make_workspace(dir.path().to_path_buf(), vec![pkg]);
+        let workspace = Workspace {
+            config: private_tool_config(),
+            ..make_workspace(dir.path().to_path_buf(), vec![pkg])
+        };
 
         assert!(workspace.get_publishable_packages().unwrap().is_empty());
     }
@@ -489,15 +476,12 @@ publish = false
         let pkg = Package {
             manifest_path: manifest,
             path: dir.path().to_path_buf(),
+            publishable: false,
             ..make_package("private-tool")
         };
         let workspace = make_workspace(dir.path().to_path_buf(), vec![pkg.clone()]);
 
-        assert!(
-            workspace
-                .is_private_package(&pkg, &Config::default())
-                .unwrap()
-        );
+        assert!(workspace.is_private_package(&pkg));
     }
 
     #[test]
