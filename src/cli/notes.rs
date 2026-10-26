@@ -1,19 +1,18 @@
 use anyhow::{Context, Result};
-use changelogs::config::{ChangelogFormat, Config};
-use changelogs::{Ecosystem, Workspace, changelog_writer};
+use changelogs::config::ChangelogFormat;
+use changelogs::{Ecosystem, Workspace, changelog_writer, ecosystems};
 
 /// Prints the CHANGELOG.md section of release `tag`, without its heading, such
 /// as for GitHub release notes. `tag` must be the release tag of a package's
 /// current version, as `publish` creates it.
 pub fn run(tag: &str, ecosystem: Option<Ecosystem>) -> Result<()> {
     let workspace = Workspace::load_with_ecosystem(ecosystem)?;
-    let config = Config::load(&workspace.changelog_dir)?;
 
-    let (package, path) = match config.changelog.format {
+    let (package, path) = match workspace.config.changelog.format {
         ChangelogFormat::Root => {
             let package = workspace
                 .unified_package()
-                .filter(|pkg| format!("v{}", pkg.version) == tag);
+                .filter(|pkg| ecosystems::root_tag_name(&pkg.version) == tag);
             (package, workspace.root.join("CHANGELOG.md"))
         }
         ChangelogFormat::PerCrate => {

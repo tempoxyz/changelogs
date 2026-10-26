@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use changelogs::changelog_entry;
-use changelogs::config::Config;
 use changelogs::error::Error;
 use changelogs::plan;
 use changelogs::workspace::Workspace;
@@ -24,8 +23,7 @@ pub fn run(verbose: bool, ecosystem: Option<Ecosystem>) -> Result<()> {
         return Ok(());
     }
 
-    let config = Config::load(&changelog_dir)?;
-    let release_plan = plan::assemble(&workspace, changelogs.clone(), &config);
+    let release_plan = plan::assemble(&workspace, changelogs.clone(), &workspace.config);
 
     println!(
         "{} {} changelog(s) found\n",

@@ -193,9 +193,10 @@ fn check_pending_changelogs(
     }
 }
 
-fn check_git_remote() -> CheckResult {
+fn check_git_remote(root: &std::path::Path) -> CheckResult {
     let remote_ok = Command::new("git")
         .args(["remote", "get-url", "origin"])
+        .current_dir(root)
         .output()
         .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
         .unwrap_or(false);
@@ -257,7 +258,7 @@ pub fn run(ecosystem: Option<Ecosystem>) -> Result<()> {
         &mut results,
         vec![check_pending_changelogs(&changelog_dir, &package_names)],
     );
-    run_checks(&mut results, vec![check_git_remote()]);
+    run_checks(&mut results, vec![check_git_remote(&workspace.root)]);
 
     print_results(&results);
     Ok(())
@@ -296,9 +297,9 @@ mod tests {
     fn fake_workspace(root: &std::path::Path) -> Workspace {
         Workspace {
             root: root.to_path_buf(),
-            changelog_dir: root.join(".changelog"),
             packages: vec![],
             ecosystem: changelogs::Ecosystem::Rust,
+            config: Default::default(),
         }
     }
 
@@ -369,7 +370,8 @@ mod tests {
 
     #[test]
     fn test_check_git_remote_in_non_git_dir() {
-        let result = check_git_remote();
+        let dir = TempDir::new().unwrap();
+        let result = check_git_remote(dir.path());
         assert!(result.is_pass() || !result.is_pass());
     }
 }

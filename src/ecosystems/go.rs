@@ -1,10 +1,9 @@
+use super::version_comment::{self, latest_git_tag_version, read_version_from_content};
 use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult};
 use crate::error::{Error, Result};
 use semver::Version;
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 /// Adapter for Go modules.
 ///
@@ -21,8 +20,6 @@ use std::process::Command;
 /// Currently only **single-module** repositories are supported. Multi-module
 /// monorepos (each with their own `go.mod` and tag prefix) are out of scope.
 pub struct GoAdapter;
-
-const VERSION_COMMENT_PREFIX: &str = "// changelogs:version ";
 
 impl EcosystemAdapter for GoAdapter {
     fn ecosystem() -> Ecosystem {
@@ -65,6 +62,7 @@ impl EcosystemAdapter for GoAdapter {
             path: root.to_path_buf(),
             manifest_path: go_mod,
             dependencies,
+            publishable: true,
         }])
     }
 
@@ -119,7 +117,7 @@ impl EcosystemAdapter for GoAdapter {
         }
         // A local release tag means the version is out even when the proxy has
         // not fetched it yet.
-        if super::git_tag_exists(Path::new("."), &format!("v{version}")) {
+        if super::git_tag_exists(Path::new("."), &super::root_tag_name(version)) {
             return Ok(true);
         }
         check_proxy_published(name, version)
@@ -135,25 +133,7 @@ impl EcosystemAdapter for GoAdapter {
     fn tag_name(pkg: &Package) -> String {
         // Root module: just `vX.Y.Z`. Sub-module support would prepend the module's
         // path within the repo, but we don't expose that here yet.
-        format!("v{}", pkg.version)
-    }
-}
-
-impl GoAdapter {
-    /// Bulk-update of dependency versions across all known packages. Mirrors the
-    /// Rust/Python signatures so that `ecosystems::update_dependency_versions`
-    /// can dispatch uniformly.
-    pub fn update_all_dependency_versions(
-        packages: &[Package],
-        _root: &Path,
-        updates: &HashMap<String, Version>,
-    ) -> Result<()> {
-        for pkg in packages {
-            for (dep, new_version) in updates {
-                Self::update_dependency_version(&pkg.manifest_path, dep, new_version)?;
-            }
-        }
-        Ok(())
+        super::root_tag_name(&pkg.version)
     }
 }
 
@@ -174,49 +154,14 @@ fn parse_module_path(go_mod: &str) -> Option<String> {
     None
 }
 
-fn read_version_from_content(content: &str) -> Option<Version> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(VERSION_COMMENT_PREFIX)
-            && let Ok(v) = rest.trim().parse::<Version>()
-        {
-            return Some(v);
-        }
-    }
-    None
-}
-
 fn upsert_version_comment(content: &str, version: &Version) -> Result<String> {
-    let new_line = format!("{}{}", VERSION_COMMENT_PREFIX, version);
-
-    // Replace existing comment if present.
-    let mut found = false;
-    let mut out: Vec<String> = Vec::with_capacity(content.lines().count() + 1);
-    for line in content.lines() {
-        if line.trim().starts_with(VERSION_COMMENT_PREFIX) {
-            out.push(new_line.clone());
-            found = true;
-        } else {
-            out.push(line.to_string());
-        }
-    }
-
-    if !found {
-        // Insert just before the `module` line. If we somehow lack one, prepend.
-        let module_idx = out
+    // Insert just before the `module` line.
+    version_comment::upsert_version_comment(content, version, |lines| {
+        lines
             .iter()
             .position(|l| l.trim_start().starts_with("module "))
-            .ok_or_else(|| {
-                Error::GoModuleNotFound("go.mod has no `module` directive".to_string())
-            })?;
-        out.insert(module_idx, new_line);
-    }
-
-    let mut joined = out.join("\n");
-    if content.ends_with('\n') && !joined.ends_with('\n') {
-        joined.push('\n');
-    }
-    Ok(joined)
+            .ok_or_else(|| Error::GoModuleNotFound("go.mod has no `module` directive".to_string()))
+    })
 }
 
 fn parse_dependencies(go_mod: &str) -> Vec<String> {
@@ -334,25 +279,6 @@ fn rewrite_require_line(line: &str, dep_name: &str, new_version: &str) -> Option
         rebuilt.push_str(suffix);
     }
     Some(rebuilt)
-}
-
-fn latest_git_tag_version(repo_dir: &Path) -> Option<Version> {
-    let output = Command::new("git")
-        .args(["tag", "--list", "v*", "--sort=-version:refname"])
-        .current_dir(repo_dir)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let candidate = line.trim().trim_start_matches('v');
-        if let Ok(v) = candidate.parse::<Version>() {
-            return Some(v);
-        }
-    }
-    None
 }
 
 fn check_proxy_published(module_path: &str, version: &Version) -> Result<bool> {
@@ -623,6 +549,7 @@ mod tests {
             path: PathBuf::from("/tmp/bar"),
             manifest_path: PathBuf::from("/tmp/bar/go.mod"),
             dependencies: vec![],
+            publishable: true,
         };
         assert_eq!(GoAdapter::tag_name(&pkg), "v1.2.3");
     }

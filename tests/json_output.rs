@@ -281,7 +281,7 @@ fn publish_json_failure() {
     init_repo(dir.path(), "[changelog]\nformat = \"per-crate\"\n");
 
     let output = Command::new(env!("CARGO_BIN_EXE_changelogs"))
-        .args(["publish", "--json", "--tag", "missing-registry"])
+        .args(["publish", "--json", "--registry", "missing-registry"])
         .current_dir(dir.path())
         .env("CHANGELOGS_CRATES_INDEX_URL", empty_registry())
         .env("CARGO_REGISTRY_TOKEN", "dummy")

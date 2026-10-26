@@ -328,6 +328,7 @@ mod tests {
             path: std::path::PathBuf::from(format!("crates/{}", name)),
             manifest_path: std::path::PathBuf::from(format!("crates/{}/Cargo.toml", name)),
             dependencies: deps.into_iter().map(String::from).collect(),
+            publishable: true,
         }
     }
 
@@ -361,9 +362,9 @@ mod tests {
     fn mock_workspace(packages: Vec<crate::ecosystems::Package>) -> Workspace {
         Workspace {
             root: std::path::PathBuf::from("/tmp/test"),
-            changelog_dir: std::path::PathBuf::from("/tmp/test/.changelog"),
             packages,
             ecosystem: crate::ecosystems::Ecosystem::Rust,
+            config: crate::config::Config::default(),
         }
     }
 

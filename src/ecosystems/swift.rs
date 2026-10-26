@@ -1,11 +1,11 @@
+use super::version_comment::{self, latest_git_tag_version, read_version_from_content};
 use crate::ecosystems::{Ecosystem, EcosystemAdapter, Package, PublishResult};
 use crate::error::{Error, Result};
 use regex::Regex;
 use semver::Version;
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::sync::LazyLock;
 
 /// Adapter for Swift Package Manager packages.
 ///
@@ -20,8 +20,6 @@ use std::process::Command;
 ///
 /// The adapter currently supports a single root `Package.swift`.
 pub struct SwiftAdapter;
-
-const VERSION_COMMENT_PREFIX: &str = "// changelogs:version ";
 
 impl EcosystemAdapter for SwiftAdapter {
     fn ecosystem() -> Ecosystem {
@@ -55,6 +53,7 @@ impl EcosystemAdapter for SwiftAdapter {
             path: root.to_path_buf(),
             manifest_path,
             dependencies,
+            publishable: true,
         }])
     }
 
@@ -72,7 +71,7 @@ impl EcosystemAdapter for SwiftAdapter {
 
     fn write_version(manifest_path: &Path, version: &Version) -> Result<()> {
         let content = fs::read_to_string(manifest_path)?;
-        fs::write(manifest_path, upsert_version_comment(&content, version))?;
+        fs::write(manifest_path, upsert_version_comment(&content, version)?)?;
         Ok(())
     }
 
@@ -99,7 +98,7 @@ impl EcosystemAdapter for SwiftAdapter {
 
         Ok(super::git_tag_exists(
             Path::new("."),
-            &format!("v{version}"),
+            &super::root_tag_name(version),
         ))
     }
 
@@ -110,78 +109,46 @@ impl EcosystemAdapter for SwiftAdapter {
     }
 
     fn tag_name(pkg: &Package) -> String {
-        format!("v{}", pkg.version)
+        super::root_tag_name(&pkg.version)
     }
 }
 
-impl SwiftAdapter {
-    pub fn update_all_dependency_versions(
-        packages: &[Package],
-        _root: &Path,
-        updates: &HashMap<String, Version>,
-    ) -> Result<()> {
-        for pkg in packages {
-            for (dep, new_version) in updates {
-                Self::update_dependency_version(&pkg.manifest_path, dep, new_version)?;
-            }
-        }
-        Ok(())
-    }
-}
+static PACKAGE_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"Package\s*\(\s*name\s*:\s*"([^"]+)""#).expect("valid package name regex")
+});
+static DEPENDENCY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\.package\s*\(\s*(?:name\s*:\s*"[^"]+"\s*,\s*)?url\s*:\s*"([^"]+)""#)
+        .expect("valid dependency regex")
+});
+static PACKAGE_CALL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\.package\s*\([^)]*\)"#).expect("valid package regex"));
+static DEPENDENCY_VERSION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(,\s*(?:from|exact)\s*:\s*)"[^"]+""#).expect("valid version regex")
+});
+static DEPENDENCY_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"url\s*:\s*"([^"]+)""#).expect("valid url regex"));
 
 fn parse_package_name(content: &str) -> Option<String> {
-    let re = Regex::new(r#"Package\s*\(\s*name\s*:\s*"([^"]+)""#).ok()?;
-    re.captures(content)
+    PACKAGE_NAME
+        .captures(content)
         .and_then(|captures| captures.get(1))
         .map(|m| m.as_str().to_string())
 }
 
-fn read_version_from_content(content: &str) -> Option<Version> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(VERSION_COMMENT_PREFIX)
-            && let Ok(version) = rest.trim().parse::<Version>()
-        {
-            return Some(version);
-        }
-    }
-    None
-}
-
-fn upsert_version_comment(content: &str, version: &Version) -> String {
-    let new_line = format!("{}{}", VERSION_COMMENT_PREFIX, version);
-    let mut found = false;
-    let mut out = Vec::with_capacity(content.lines().count() + 1);
-
-    for line in content.lines() {
-        if line.trim().starts_with(VERSION_COMMENT_PREFIX) {
-            out.push(new_line.clone());
-            found = true;
-        } else {
-            out.push(line.to_string());
-        }
-    }
-
-    if !found {
-        let insert_idx = out
+fn upsert_version_comment(content: &str, version: &Version) -> Result<String> {
+    // Insert just after the `// swift-tools-version:` line, or first.
+    version_comment::upsert_version_comment(content, version, |lines| {
+        Ok(lines
             .iter()
             .position(|line| line.trim_start().starts_with("// swift-tools-version:"))
             .map(|idx| idx + 1)
-            .unwrap_or(0);
-        out.insert(insert_idx, new_line);
-    }
-
-    let mut joined = out.join("\n");
-    if content.ends_with('\n') && !joined.ends_with('\n') {
-        joined.push('\n');
-    }
-    joined
+            .unwrap_or(0))
+    })
 }
 
 fn parse_dependencies(content: &str) -> Vec<String> {
-    let re = Regex::new(r#"\.package\s*\(\s*(?:name\s*:\s*"[^"]+"\s*,\s*)?url\s*:\s*"([^"]+)""#)
-        .expect("valid dependency regex");
-    re.captures_iter(content)
+    DEPENDENCY
+        .captures_iter(content)
         .filter_map(|captures| captures.get(1))
         .map(|m| dependency_name_from_url(m.as_str()))
         .collect()
@@ -199,11 +166,9 @@ fn rewrite_dependency_versions(
 ) -> (String, bool) {
     let mut modified = false;
     let target = format!(r#"$1"{}""#, new_version);
-    let package_re = Regex::new(r#"\.package\s*\([^)]*\)"#).expect("valid package regex");
-    let version_re =
-        Regex::new(r#"(,\s*(?:from|exact)\s*:\s*)"[^"]+""#).expect("valid version regex");
+    let version_re = &*DEPENDENCY_VERSION;
 
-    let updated = package_re.replace_all(content, |captures: &regex::Captures<'_>| {
+    let updated = PACKAGE_CALL.replace_all(content, |captures: &regex::Captures<'_>| {
         let package = captures.get(0).expect("whole match").as_str();
         if !dependency_matches(package, dep_name) || !version_re.is_match(package) {
             return package.to_string();
@@ -216,31 +181,11 @@ fn rewrite_dependency_versions(
 }
 
 fn dependency_matches(package_call: &str, dep_name: &str) -> bool {
-    let url_re = Regex::new(r#"url\s*:\s*"([^"]+)""#).expect("valid url regex");
-    url_re
+    DEPENDENCY_URL
         .captures(package_call)
         .and_then(|captures| captures.get(1))
         .map(|url| dependency_name_from_url(url.as_str()) == dep_name || url.as_str() == dep_name)
         .unwrap_or(false)
-}
-
-fn latest_git_tag_version(repo_dir: &Path) -> Option<Version> {
-    let output = Command::new("git")
-        .args(["tag", "--list", "v*", "--sort=-version:refname"])
-        .current_dir(repo_dir)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let candidate = line.trim().trim_start_matches('v');
-        if let Ok(version) = candidate.parse::<Version>() {
-            return Some(version);
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -268,7 +213,7 @@ mod tests {
     #[test]
     fn upsert_inserts_after_tools_version() {
         let content = "// swift-tools-version: 5.10\nimport PackageDescription\n";
-        let updated = upsert_version_comment(content, &Version::new(0, 1, 0));
+        let updated = upsert_version_comment(content, &Version::new(0, 1, 0)).unwrap();
         assert!(updated.starts_with("// swift-tools-version: 5.10\n// changelogs:version 0.1.0\n"));
     }
 

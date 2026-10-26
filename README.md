@@ -90,7 +90,8 @@ Or download directly from [GitHub Releases](https://github.com/wevm/changelogs/r
 | `status` | Show pending changelogs and releases |
 | `version` | Apply version bumps and update changelogs |
 | `version --prerelease rc` | Apply prerelease bumps like `1.6.0-rc1`, then `1.6.0-rc2` |
-| `publish` | Publish unpublished packages to crates.io |
+| `publish` | Publish unpublished packages to their registry (crates.io, PyPI) and tag the releases |
+| `publish --registry <name>` | Publish to another Cargo registry or PyPI repository |
 | `notes <tag>` | Print the changelog section of a release tag, such as `v1.2.0` or `name@1.2.0` |
 
 ### JSON output
