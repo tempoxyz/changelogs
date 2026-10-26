@@ -4,7 +4,6 @@ use crate::error::{Error, Result};
 use semver::Version;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct Workspace {
@@ -114,16 +113,12 @@ impl Workspace {
         let mut publishable = Vec::new();
 
         for pkg in &self.packages {
-            if self.is_private_package(pkg, &config)? {
-                if !self.private_package_is_tagged(pkg, &config)? {
-                    publishable.push(pkg);
-                }
+            let private = self.is_private_package(pkg, &config)?;
+            if self.release_is_tagged(pkg, &config, private) {
                 continue;
             }
 
-            let is_published = ecosystems::is_published(self.ecosystem, &pkg.name, &pkg.version)?;
-
-            if !is_published {
+            if private || !ecosystems::is_published(self.ecosystem, &pkg.name, &pkg.version)? {
                 publishable.push(pkg);
             }
         }
@@ -182,6 +177,10 @@ impl Workspace {
         ecosystems::tag_name(self.ecosystem, pkg)
     }
 
+    pub fn tag_exists(&self, tag: &str) -> bool {
+        ecosystems::git_tag_exists(&self.root, tag)
+    }
+
     fn is_private_package(&self, pkg: &Package, config: &Config) -> Result<bool> {
         if self.ecosystem != Ecosystem::Rust {
             return Ok(false);
@@ -194,29 +193,29 @@ impl Workspace {
         Ok(!ecosystems::is_registry_publishable(self.ecosystem, pkg)?)
     }
 
-    fn private_package_is_tagged(&self, pkg: &Package, config: &Config) -> Result<bool> {
-        let package = if config.changelog.format == ChangelogFormat::Root {
-            self.unified_package().unwrap_or(pkg)
-        } else {
-            pkg
-        };
-        if package.version == Version::new(0, 0, 0) {
-            return Ok(true);
-        }
-
+    /// Whether this package version's release tag already exists, so a rerun
+    /// of `publish` treats it as released.
+    ///
+    /// In root format the unified `v{version}` tag covers private packages and
+    /// the unified package itself; other public packages rely on the registry.
+    fn release_is_tagged(&self, pkg: &Package, config: &Config, private: bool) -> bool {
         let tag = if config.changelog.format == ChangelogFormat::Root {
-            let version = &package.version;
-            format!("v{version}")
+            let unified = self.unified_package().unwrap_or(pkg);
+            if !private && unified.name != pkg.name {
+                return false;
+            }
+            if private && unified.version == Version::new(0, 0, 0) {
+                return true;
+            }
+            format!("v{}", unified.version)
         } else {
-            self.tag_name(package)
+            if private && pkg.version == Version::new(0, 0, 0) {
+                return true;
+            }
+            self.tag_name(pkg)
         };
-        let reference = format!("refs/tags/{tag}");
-        let output = Command::new("git")
-            .args(["rev-parse", "--verify", "--quiet", &reference])
-            .current_dir(&self.root)
-            .output()?;
 
-        Ok(output.status.success())
+        self.tag_exists(&tag)
     }
 }
 
@@ -224,6 +223,7 @@ impl Workspace {
 mod tests {
     use super::*;
     use crate::ecosystems::Package;
+    use std::process::Command;
     use tempfile::TempDir;
 
     fn run_git(root: &Path, args: &[&str]) {

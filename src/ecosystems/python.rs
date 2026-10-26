@@ -136,26 +136,17 @@ impl EcosystemAdapter for PythonAdapter {
     }
 
     fn is_published(name: &str, version: &Version) -> Result<bool> {
+        // Query the exact release: PyPI normalizes the version in the URL
+        // (PEP 440), so `1.6.0-rc1` finds the uploaded `1.6.0rc1`.
         let normalized_name = Self::normalize_pep503(name);
-        let url = format!("https://pypi.org/pypi/{}/json", normalized_name);
+        let base = super::registry_base_url("CHANGELOGS_PYPI_URL", "https://pypi.org");
+        let url = format!("{}/pypi/{}/{}/json", base, normalized_name, version);
 
-        let mut response = match super::registry_agent().get(&url).call() {
-            Ok(resp) => resp,
-            Err(ureq::Error::StatusCode(404)) => return Ok(false),
-            Err(e) => return Err(Error::PypiCheckFailed(e.to_string())),
-        };
-
-        let json: serde_json::Value = response
-            .body_mut()
-            .read_json()
-            .map_err(|e| Error::PypiCheckFailed(format!("failed to parse JSON: {}", e)))?;
-
-        if let Some(releases) = json.get("releases").and_then(|r| r.as_object()) {
-            let version_str = version.to_string();
-            return Ok(releases.contains_key(&version_str));
+        match super::registry_agent().get(&url).call() {
+            Ok(_) => Ok(true),
+            Err(ureq::Error::StatusCode(404)) => Ok(false),
+            Err(e) => Err(Error::PypiCheckFailed(e.to_string())),
         }
-
-        Ok(false)
     }
 
     fn publish(pkg: &Package, dry_run: bool, registry: Option<&str>) -> Result<PublishResult> {

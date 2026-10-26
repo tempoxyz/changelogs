@@ -206,6 +206,8 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - run: npm install -g @sourcegraph/amp
 
@@ -219,6 +221,10 @@ jobs:
 On fork pull requests, GitHub provides a read-only `GITHUB_TOKEN`. The check
 still runs and sets the `found` output, but skips the PR comment by default.
 Set `comment: true` only when passing a token that can write PR comments.
+
+The check compares against `origin/<ref>` (`ref` defaults to the PR's base
+branch), so check out with `fetch-depth: 0`. When it generates an entry, it
+builds the CLI from the action's own ref with `cargo`.
 
 ### Create RC PR or Release
 
@@ -332,6 +338,7 @@ merges, so changelogs pushed after the scheduled run ship in the same release.
 | `auto-merge` | Enable squash auto-merge on the version PR so it merges once required checks pass | `false` |
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
+| `draft-releases` | Create GitHub releases as drafts so a later job can attach assets and publish them (needed with immutable releases). The `releaseTags` output lists the tags whose releases were created or are still drafts. | `false` |
 | `publish-mode` | `"registry"` publishes to crates.io/PyPI (default). `"tags-only"` intentionally skips registry authentication; only git tags and GitHub releases are created. When no registry authentication is configured, registry upload is skipped automatically. | `registry` |
 
 ### Tag-only publishing (binary releases)
