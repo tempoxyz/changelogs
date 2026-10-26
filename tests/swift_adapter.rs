@@ -1,5 +1,6 @@
 use changelogs::ecosystems::{Ecosystem, EcosystemAdapter, SwiftAdapter};
 use semver::Version;
+use serial_test::serial;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
@@ -126,6 +127,7 @@ fn test_swift_alias_parsing() {
 }
 
 #[test]
+#[serial]
 fn test_swift_is_published_checks_existing_git_tag() {
     let tmp = TempDir::new().unwrap();
     let previous_dir = std::env::current_dir().unwrap();

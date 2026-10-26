@@ -267,43 +267,29 @@ mod tests {
 
     #[test]
     fn test_highest_bump_wins() {
+        let ws = mock_workspace(vec![mock_package("foo", "1.0.0", vec![])]);
         let changelogs = vec![
-            Changelog {
-                id: "a".to_string(),
-                summary: "patch change".to_string(),
-                releases: vec![Release {
+            make_changelog(
+                "a",
+                vec![Release {
                     package: "foo".to_string(),
                     bump: BumpType::Patch,
                 }],
-                commit: None,
-            },
-            Changelog {
-                id: "b".to_string(),
-                summary: "minor change".to_string(),
-                releases: vec![Release {
+            ),
+            make_changelog(
+                "b",
+                vec![Release {
                     package: "foo".to_string(),
                     bump: BumpType::Minor,
                 }],
-                commit: None,
-            },
+            ),
         ];
 
-        let _config = Config::default();
+        let plan = assemble(&ws, changelogs, &Config::default());
 
-        let bump_map: HashMap<String, BumpType> = changelogs
-            .iter()
-            .flat_map(|cs| &cs.releases)
-            .fold(HashMap::new(), |mut acc, rel| {
-                let current = acc.get(&rel.package).copied();
-                let new_bump = match current {
-                    Some(existing) => existing.max(rel.bump),
-                    None => rel.bump,
-                };
-                acc.insert(rel.package.clone(), new_bump);
-                acc
-            });
-
-        assert_eq!(bump_map.get("foo"), Some(&BumpType::Minor));
+        assert_eq!(plan.releases.len(), 1);
+        assert_eq!(plan.releases[0].bump, BumpType::Minor);
+        assert_eq!(plan.releases[0].new_version, Version::new(1, 1, 0));
     }
 
     fn mock_workspace(packages: Vec<crate::ecosystems::Package>) -> Workspace {

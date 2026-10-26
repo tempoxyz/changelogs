@@ -118,6 +118,31 @@ fn create_unified_tag(workspace: &Workspace, version: &semver::Version) -> Resul
     Ok(1)
 }
 
+fn create_git_tags(workspace: &Workspace, packages: &[&Package]) -> Result<usize> {
+    let mut created = 0;
+    for pkg in packages {
+        let tag = workspace.tag_name(pkg);
+
+        let output = Command::new("git")
+            .args(["tag", "-a", &tag, "-m", &format!("Release {}", tag)])
+            .current_dir(&workspace.root)
+            .output()
+            .map_err(|e| anyhow::anyhow!("failed to run 'git tag': {}", e))?;
+
+        if output.status.success() {
+            println!("Created git tag: {}", tag);
+            created += 1;
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let error = stderr.trim();
+            anyhow::bail!("failed to create git tag {tag}: {error}");
+        }
+    }
+
+    println!("\nDon't forget to push tags: git push --follow-tags");
+    Ok(created)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,29 +222,4 @@ mod tests {
         assert_eq!(create_unified_tag(&workspace, &version).unwrap(), 1);
         assert!(create_unified_tag(&workspace, &version).is_err());
     }
-}
-
-fn create_git_tags(workspace: &Workspace, packages: &[&Package]) -> Result<usize> {
-    let mut created = 0;
-    for pkg in packages {
-        let tag = workspace.tag_name(pkg);
-
-        let output = Command::new("git")
-            .args(["tag", "-a", &tag, "-m", &format!("Release {}", tag)])
-            .current_dir(&workspace.root)
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to run 'git tag': {}", e))?;
-
-        if output.status.success() {
-            println!("Created git tag: {}", tag);
-            created += 1;
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let error = stderr.trim();
-            anyhow::bail!("failed to create git tag {tag}: {error}");
-        }
-    }
-
-    println!("\nDon't forget to push tags: git push --follow-tags");
-    Ok(created)
 }

@@ -41,9 +41,13 @@ impl EcosystemAdapter for RustAdapter {
             return Ok(version_str.parse()?);
         }
 
-        let version_str = doc["package"]["version"].as_str().ok_or_else(|| {
-            crate::error::Error::VersionNotFound(manifest_path.display().to_string())
-        })?;
+        let version_str = doc
+            .get("package")
+            .and_then(|p| p.get("version"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                crate::error::Error::VersionNotFound(manifest_path.display().to_string())
+            })?;
 
         Ok(version_str.parse()?)
     }
@@ -385,13 +389,22 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "index not found")]
     fn test_read_version_missing_version() {
         let dir = TempDir::new().unwrap();
         let manifest = dir.path().join("Cargo.toml");
         std::fs::write(&manifest, "[package]\nname = \"test\"\n").unwrap();
 
-        let _ = RustAdapter::read_version(&manifest);
+        let err = RustAdapter::read_version(&manifest).unwrap_err();
+        assert!(matches!(err, crate::error::Error::VersionNotFound(_)));
+    }
+
+    #[test]
+    fn test_read_version_virtual_manifest() {
+        let dir = TempDir::new().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(&manifest, "[workspace]\nmembers = []\n").unwrap();
+
+        assert!(RustAdapter::read_version(&manifest).is_err());
     }
 
     #[test]
