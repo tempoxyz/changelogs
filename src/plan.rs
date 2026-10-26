@@ -289,9 +289,11 @@ pub fn assemble_with_prerelease(
         }
     }
 
-    // Fixed groups always release on one version: the highest version any
-    // member ends up on, even when members start on different versions.
-    for members in &fixed_groups {
+    // Explicit fixed groups always release on one version: the highest
+    // version any member ends up on, even when members start on different
+    // versions. The implicit root-format group only shares the bump type, so
+    // crates on different versions keep their own version lines.
+    for members in config.fixed.iter().map(|g| &g.members) {
         let Some(group_version) = releases
             .iter()
             .filter(|r| members.contains(&r.name))
@@ -894,6 +896,38 @@ mod tests {
         assert_eq!(
             unknown_package_refs(&ws, &changelogs, &config),
             vec![("cl1".to_string(), "ghost".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_root_format_keeps_divergent_versions() {
+        let ws = mock_workspace(vec![
+            mock_package("app", "1.4.0", vec![]),
+            mock_package("helper", "0.2.0", vec![]),
+        ]);
+        let mut config = Config::default();
+        config.changelog.format = ChangelogFormat::Root;
+        let changelogs = vec![make_changelog(
+            "a",
+            vec![Release {
+                package: "helper".to_string(),
+                bump: BumpType::Patch,
+            }],
+        )];
+
+        let plan = assemble(&ws, changelogs, &config);
+        let versions: Vec<_> = plan
+            .releases
+            .iter()
+            .map(|r| (r.name.as_str(), r.new_version.to_string()))
+            .collect();
+
+        assert_eq!(
+            versions,
+            vec![
+                ("app", "1.4.1".to_string()),
+                ("helper", "0.2.1".to_string())
+            ]
         );
     }
 }
