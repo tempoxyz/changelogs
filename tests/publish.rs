@@ -21,6 +21,7 @@ fn rust_package(dir: &std::path::Path) -> Package {
         path: dir.to_path_buf(),
         manifest_path: manifest,
         dependencies: vec![],
+        publishable: true,
     }
 }
 
@@ -70,6 +71,7 @@ fn python_publish_without_token_skips_silently() {
         path: dir.path().to_path_buf(),
         manifest_path: manifest,
         dependencies: vec![],
+        publishable: true,
     };
 
     // Mirror the action's real "no pypi-token" environment: TWINE_USERNAME is

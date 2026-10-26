@@ -159,10 +159,9 @@ runs:
           if [ -n "$ECOSYSTEM_INPUT" ]; then
             CMD+=(--ecosystem "$ECOSYSTEM_INPUT")
           fi
-          CMD+=(version --dry-run)
+          CMD+=(version --dry-run --json)
 
-          output=$("${CMD[@]}" 2>&1) && version_exit=0 || version_exit=$?
-          if [ $version_exit -eq 0 ] && echo "$output" | grep -Eq '[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*(\+[0-9A-Za-z][0-9A-Za-z.-]*)? → [0-9]+\.[0-9]+\.[0-9]+'; then
+          if plan=$("${CMD[@]}") && jq -e 'any(.releases[]; .is_promotion)' <<< "$plan" > /dev/null; then
             has_prereleases=true
             echo "Found prerelease versions to promote"
           fi
@@ -208,56 +207,26 @@ runs:
         if [ -n "$PRERELEASE_INPUT" ]; then
           CMD+=(--prerelease "$PRERELEASE_INPUT")
         fi
-        output=$("${CMD[@]}" 2>&1) && version_exit=0 || version_exit=$?
-        echo "$output"
+        CMD+=(--json)
+        plan_file="$RUNNER_TEMP/changelogs-version.json"
+        "${CMD[@]}" > "$plan_file" && version_exit=0 || version_exit=$?
         if [ $version_exit -ne 0 ]; then
           echo "::error::changelogs version failed with exit code $version_exit"
           exit $version_exit
         fi
-        
-        # Check if using root changelog format
-        changelog_format="per-crate"
-        if [ -f ".changelog/config.toml" ]; then
-          fmt=$(grep -E '^\s*format\s*=' .changelog/config.toml | sed 's/.*=\s*"\(.*\)"/\1/' | tr -d '[:space:]')
-          if [ "$fmt" = "root" ]; then
-            changelog_format="root"
-          fi
-        fi
-        
-        # Extract versions from output (e.g., "tempo-common 0.1.4 → 0.1.5-rc1" -> "tempo-common@0.1.5-rc1")
-        semver_re='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?'
-        all_versions=$(echo "$output" | grep -oE "[^[:space:]]+ $semver_re → $semver_re" | sed 's/ .* → /@/')
-        count=$(echo "$all_versions" | grep -c . || true)
+        echo "plan-file=$plan_file" >> $GITHUB_OUTPUT
 
         # Promoting a prerelease to stable needs a human sign-off, so auto-merge skips these PRs.
-        promotes_prerelease=false
-        if echo "$output" | grep -oE "$semver_re → $semver_re" | grep -Eq -- '^[0-9]+\.[0-9]+\.[0-9]+-[^ ]* → [0-9]+\.[0-9]+\.[0-9]+(\+[^ ]*)?$'; then
-          promotes_prerelease=true
-        fi
+        promotes_prerelease=$(jq -r 'any(.releases[]; .is_promotion)' "$plan_file")
         echo "promotesPrerelease=$promotes_prerelease" >> $GITHUB_OUTPUT
 
-        if [ "$changelog_format" = "root" ]; then
-          # Root format uses the root package's version for the repository release.
-          # Workspace discovery order is not guaranteed to put the root package first.
-          root_package=""
-          if [ -f "Cargo.toml" ]; then
-            root_package=$(awk '
-              /^\[package\]$/ { in_package=1; next }
-              /^\[/ { in_package=0 }
-              in_package && /^name[[:space:]]*=/ {
-                value=$0
-                sub(/^[^=]*=[[:space:]]*"/, "", value)
-                sub(/".*/, "", value)
-                print value
-                exit
-              }
-            ' Cargo.toml)
-          fi
+        # Release names like "tempo-common@0.1.5-rc1"
+        mapfile -t all_versions < <(jq -r '.releases[] | "\(.name)@\(.new_version)"' "$plan_file")
+        count=${#all_versions[@]}
 
-          new_version=$(echo "$all_versions" | awk -F@ -v package="$root_package" '$1 == package { print $2; exit }')
-          if [ -z "$new_version" ]; then
-            new_version=$(echo "$all_versions" | head -1 | sed 's/.*@//')
-          fi
+        if [ "$(jq -r '.format' "$plan_file")" = "root" ]; then
+          # Root format releases the repository as one unified version.
+          new_version=$(jq -r '.unified_version // empty' "$plan_file")
           if [ -n "$new_version" ]; then
             versions="\`v$new_version\`"
           else
@@ -266,16 +235,12 @@ runs:
         elif [ "$count" -eq 0 ]; then
           versions=""
         elif [ "$count" -eq 1 ]; then
-          versions="\`$(echo "$all_versions" | head -1)\`"
+          versions="\`${all_versions[0]}\`"
         elif [ "$count" -eq 2 ]; then
-          first=$(echo "$all_versions" | head -1)
-          second=$(echo "$all_versions" | tail -1)
-          versions="\`$first\` and \`$second\`"
+          versions="\`${all_versions[0]}\` and \`${all_versions[1]}\`"
         else
-          first=$(echo "$all_versions" | head -1)
-          second=$(echo "$all_versions" | sed -n '2p')
           remaining=$((count - 2))
-          versions="\`$first\`, \`$second\` and $remaining more"
+          versions="\`${all_versions[0]}\`, \`${all_versions[1]}\` and $remaining more"
         fi
         echo "versions=$versions" >> $GITHUB_OUTPUT
         
@@ -299,7 +264,16 @@ runs:
       if: steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true'
       id: body
       shell: bash
+      env:
+        PLAN_FILE: ${{ steps.version.outputs.plan-file }}
       run: |
+        # The changelog sections this release adds; packages sharing one root
+        # section list it once.
+        notes=$(jq -r '
+          [.releases[].notes | select(length > 0)]
+          | reduce .[] as $n ([]; if any(.[]; . == $n) then . else . + [$n] end)
+          | join("\n")
+        ' "$PLAN_FILE")
         {
           echo "This PR was opened by the Changelogs release workflow."
           echo ""
@@ -308,10 +282,8 @@ runs:
           echo "---"
           echo ""
           
-          # Show the new changelog entries (uncommitted changes from changelogs version)
-          if [ -f "CHANGELOG.md" ]; then
-            git diff -- CHANGELOG.md | grep '^+' | grep -v '^+++' | sed 's/^+//' | head -100 || true
-          fi
+          # Stay under GitHub's 65536-character limit for PR bodies.
+          printf '%s\n' "${notes:0:60000}"
         } > /tmp/pr-body.md
         
         echo "body-file=/tmp/pr-body.md" >> $GITHUB_OUTPUT
@@ -427,12 +399,15 @@ runs:
         if [ -n "$ECOSYSTEM_INPUT" ]; then
           ECOSYSTEM_FLAG=(--ecosystem "$ECOSYSTEM_INPUT")
         fi
-        output=$(changelogs "${ECOSYSTEM_FLAG[@]}" publish 2>&1) && publish_exit=0 || publish_exit=$?
-        echo "$output"
-        
-        # Parse published packages from output (✓ = published, ⊘ = skipped/tags-only)
-        packages=$(echo "$output" | { grep -E "^\s+\S+\s+v[0-9]" || true; } | { grep -E "✓|⊘" || true; } | awk '{print $1}' | jq -R -s -c 'split("\n") | map(select(length > 0))')
-        
+        report="$RUNNER_TEMP/changelogs-publish.json"
+        changelogs "${ECOSYSTEM_FLAG[@]}" publish --json > "$report" && publish_exit=0 || publish_exit=$?
+        cat "$report"
+
+        # Published and skipped (tags-only) packages are released; failed ones are not.
+        packages=$(jq -c '[(.published + .skipped)[].name]' "$report" || true)
+        tags=$(jq -c '.tags_created' "$report" || true)
+        echo "tags=${tags:-[]}" >> $GITHUB_OUTPUT
+
         if [ "$packages" != "[]" ] && [ -n "$packages" ]; then
           echo "published=true" >> $GITHUB_OUTPUT
           echo "publishedPackages=$packages" >> $GITHUB_OUTPUT
@@ -449,18 +424,20 @@ runs:
     # Run even when publish failed partway, so tags of packages that did reach
     # the registry are not lost.
     - name: Push git tags
-      if: always() && steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outputs.published == 'true'
+      if: always() && steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outputs.tags != '' && steps.publish.outputs.tags != '[]'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        TAGS: ${{ steps.publish.outputs.tags }}
       run: |
-        # Push explicit tag refs: --follow-tags needs a branch and fails on a detached HEAD.
+        # Push the tags publish created, as explicit refs: --follow-tags needs a
+        # branch and fails on a detached HEAD.
         refs=()
-        for tag in $(git tag --points-at HEAD); do
+        while IFS= read -r tag; do
           refs+=("refs/tags/$tag")
-        done
+        done < <(jq -r '.[]' <<< "$TAGS")
         if [ ${#refs[@]} -eq 0 ]; then
-          echo "No tags at HEAD to push"
+          echo "No tags to push"
           exit 0
         fi
         git push origin "${refs[@]}"
@@ -471,8 +448,14 @@ runs:
       shell: bash
       env:
         DRAFT_RELEASES: ${{ inputs.draft-releases }}
+        ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
+        export PATH="$HOME/.local/bin:$PATH"
+        ECOSYSTEM_FLAG=()
+        if [ -n "$ECOSYSTEM_INPUT" ]; then
+          ECOSYSTEM_FLAG=(--ecosystem "$ECOSYSTEM_INPUT")
+        fi
         create_args=()
         if [ "$DRAFT_RELEASES" = "true" ]; then
           create_args+=(--draft)
@@ -492,72 +475,12 @@ runs:
           fi
           echo "Creating release for $tag"
           
-          # Extract changelog section for this tag
-          changelog_notes=""
-          
-          # Parse package name from tag (e.g., "tidx@0.1.1" -> "tidx")
-          if [[ "$tag" == *"@"* ]]; then
-            pkg_name="${tag%@*}"
-          else
-            pkg_name=""
+          # The tag's section of the CHANGELOG.md it was released from
+          if ! changelog_notes=$(changelogs "${ECOSYSTEM_FLAG[@]}" notes "$tag"); then
+            echo "No changelog section for $tag; using GitHub's generated notes"
+            changelog_notes=""
           fi
-          
-          # Find the changelog file (per-crate or root)
-          changelog_file=""
-          if [ -n "$pkg_name" ]; then
-            # Check common locations for per-crate changelogs
-            for dir in "crates/$pkg_name" "packages/$pkg_name" "$pkg_name"; do
-              if [ -f "$dir/CHANGELOG.md" ]; then
-                changelog_file="$dir/CHANGELOG.md"
-                break
-              fi
-            done
-            # Fallback: try stripping first prefix (e.g., "tempo-alloy" -> "alloy")
-            if [ -z "$changelog_file" ]; then
-              stripped="${pkg_name#*-}"
-              if [ "$stripped" != "$pkg_name" ]; then
-                for dir in "crates/$stripped" "packages/$stripped" "$stripped"; do
-                  if [ -f "$dir/CHANGELOG.md" ]; then
-                    changelog_file="$dir/CHANGELOG.md"
-                    break
-                  fi
-                done
-              fi
-            fi
-          fi
-          # Fall back to root CHANGELOG.md
-          if [ -z "$changelog_file" ] && [ -f "CHANGELOG.md" ]; then
-            changelog_file="CHANGELOG.md"
-          fi
-          
-          if [ -n "$changelog_file" ]; then
-            # Extract version from tag: "pkg@1.2.3" -> "1.2.3", "v1.2.3" -> "1.2.3"
-            if [[ "$tag" == v* ]]; then
-              version="${tag#v}"
-            elif [[ "$tag" == *"@"* ]]; then
-              version="${tag#*@}"
-            else
-              version="$tag"
-            fi
-            
-            changelog_notes=$(awk -v ver="$version" -v tag="$tag" '
-              BEGIN {
-                printing=0
-                root_prefix="## " ver
-                tag_prefix="## `" tag "`"
-              }
-              /^## / {
-                if (printing) exit
-                if (index($0, tag_prefix) == 1) { printing=1; next }
-                if (index($0, root_prefix) == 1) {
-                  c = substr($0, length(root_prefix) + 1, 1)
-                  if (c == " " || c == "(" || c == "") { printing=1; next }
-                }
-              }
-              printing { print }
-            ' "$changelog_file")
-          fi
-          
+
           # Find previous tag with the same package prefix for accurate changelog diff.
           # NOTE: `grep -Fxv` exits 1 when every input line matches the excluded
           # pattern (i.e. when the only tag is `$tag` itself), and under

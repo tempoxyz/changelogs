@@ -1,0 +1,12 @@
+[[packages]]
+name = "core"
+version = "1.0.0"
+
+[[packages]]
+name = "app"
+version = "1.0.0"
+deps = ["core"]
+
+[[packages]]
+name = "cli"
+version = "1.0.0"

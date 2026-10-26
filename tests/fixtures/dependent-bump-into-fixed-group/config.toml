@@ -1,0 +1,4 @@
+dependent_bump = "patch"
+
+[[fixed]]
+members = ["app", "cli"]

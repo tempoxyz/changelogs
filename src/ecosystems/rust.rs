@@ -9,6 +9,8 @@ use toml_edit::DocumentMut;
 
 pub struct RustAdapter;
 
+const DEPENDENCY_SECTIONS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+
 impl EcosystemAdapter for RustAdapter {
     fn ecosystem() -> Ecosystem {
         Ecosystem::Rust
@@ -85,19 +87,29 @@ impl EcosystemAdapter for RustAdapter {
         let mut doc: DocumentMut = content.parse()?;
         let mut modified = false;
 
-        for section in &["dependencies", "dev-dependencies", "build-dependencies"] {
-            let Some(dep) = doc.get_mut(section).and_then(|d| d.get_mut(dep_name)) else {
-                continue;
-            };
-            modified |= Self::update_dep_version_in_item(dep, new_version);
+        for section in DEPENDENCY_SECTIONS {
+            if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut()) {
+                modified |= Self::update_dep_in_table(deps, dep_name, new_version);
+            }
         }
 
-        if let Some(dep) = doc
+        if let Some(targets) = doc.get_mut("target").and_then(|t| t.as_table_like_mut()) {
+            for (_, target) in targets.iter_mut() {
+                for section in DEPENDENCY_SECTIONS {
+                    if let Some(deps) = target.get_mut(section).and_then(|d| d.as_table_like_mut())
+                    {
+                        modified |= Self::update_dep_in_table(deps, dep_name, new_version);
+                    }
+                }
+            }
+        }
+
+        if let Some(deps) = doc
             .get_mut("workspace")
             .and_then(|w| w.get_mut("dependencies"))
-            .and_then(|d| d.get_mut(dep_name))
+            .and_then(|d| d.as_table_like_mut())
         {
-            modified |= Self::update_dep_version_in_item(dep, new_version);
+            modified |= Self::update_dep_in_table(deps, dep_name, new_version);
         }
 
         if modified {
@@ -173,6 +185,43 @@ impl EcosystemAdapter for RustAdapter {
             stdout.trim(),
             stderr.trim(),
         )))
+    }
+
+    fn update_all_dependency_versions(
+        packages: &[Package],
+        root: &Path,
+        updates: &HashMap<String, Version>,
+    ) -> Result<()> {
+        for package in packages {
+            for (dep_name, new_version) in updates {
+                Self::update_dependency_version(&package.manifest_path, dep_name, new_version)?;
+            }
+        }
+
+        let root_manifest = root.join("Cargo.toml");
+        if !root_manifest.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&root_manifest)?;
+        let mut doc: DocumentMut = content.parse()?;
+        let mut modified = false;
+
+        if let Some(deps) = doc
+            .get_mut("workspace")
+            .and_then(|w| w.get_mut("dependencies"))
+            .and_then(|d| d.as_table_like_mut())
+        {
+            for (dep_name, new_version) in updates {
+                modified |= Self::update_dep_in_table(deps, dep_name, new_version);
+            }
+        }
+
+        if modified {
+            std::fs::write(&root_manifest, doc.to_string())?;
+        }
+
+        Ok(())
     }
 }
 
@@ -260,6 +309,7 @@ impl RustAdapter {
                     .into_std_path_buf(),
                 manifest_path: package.manifest_path.clone().into_std_path_buf(),
                 dependencies: deps,
+                publishable: Self::is_registry_publishable(package),
             });
         }
 
@@ -342,58 +392,55 @@ impl RustAdapter {
         }
     }
 
-    fn update_dep_version_in_item(dep: &mut toml_edit::Item, new_version: &Version) -> bool {
-        if let Some(table) = dep.as_inline_table_mut() {
-            if table.contains_key("version") {
-                table.insert("version", new_version.to_string().into());
-                return true;
+    /// Update every entry in a dependency table that refers to `dep_name`,
+    /// either by key or, for renamed dependencies, by its `package` field.
+    fn update_dep_in_table(
+        deps: &mut dyn toml_edit::TableLike,
+        dep_name: &str,
+        new_version: &Version,
+    ) -> bool {
+        let mut modified = false;
+        for (key, dep) in deps.iter_mut() {
+            let package = dep
+                .as_table_like()
+                .and_then(|t| t.get("package"))
+                .and_then(|p| p.as_str());
+            let refers_to_dep = match package {
+                Some(package) => package == dep_name,
+                None => key.get() == dep_name,
+            };
+            if refers_to_dep {
+                modified |= Self::update_dep_version_in_item(dep, new_version);
             }
-        } else if let Some(table) = dep.as_table_mut()
-            && table.contains_key("version")
-        {
-            table["version"] = toml_edit::value(new_version.to_string());
-            return true;
         }
-        false
+        modified
     }
 
-    pub fn update_all_dependency_versions(
-        packages: &[Package],
-        root: &Path,
-        updates: &HashMap<String, Version>,
-    ) -> Result<()> {
-        for package in packages {
-            for (dep_name, new_version) in updates {
-                Self::update_dependency_version(&package.manifest_path, dep_name, new_version)?;
-            }
+    fn update_dep_version_in_item(dep: &mut toml_edit::Item, new_version: &Version) -> bool {
+        let Some(table) = dep.as_table_like_mut() else {
+            return false;
+        };
+        let Some(current) = table.get("version").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        let new_req = Self::rewrite_version_req(current, new_version);
+        if let Some(value) = table.get_mut("version").and_then(|v| v.as_value_mut()) {
+            let decor = value.decor().clone();
+            *value = new_req.into();
+            *value.decor_mut() = decor;
         }
+        true
+    }
 
-        let root_manifest = root.join("Cargo.toml");
-        if !root_manifest.exists() {
-            return Ok(());
-        }
-
-        let content = std::fs::read_to_string(&root_manifest)?;
-        let mut doc: DocumentMut = content.parse()?;
-        let mut modified = false;
-
-        if let Some(deps) = doc
-            .get_mut("workspace")
-            .and_then(|w| w.get_mut("dependencies"))
-            .and_then(|d| d.as_table_mut())
-        {
-            for (dep_name, new_version) in updates {
-                if let Some(dep) = deps.get_mut(dep_name) {
-                    modified |= Self::update_dep_version_in_item(dep, new_version);
-                }
-            }
-        }
-
-        if modified {
-            std::fs::write(&root_manifest, doc.to_string())?;
-        }
-
-        Ok(())
+    /// Replace the version in a requirement while keeping its operator, so
+    /// `=1.0.0` becomes `=2.0.0` and `~1.0` becomes `~2.0.0`.
+    fn rewrite_version_req(current: &str, new_version: &Version) -> String {
+        let operator: String = current
+            .trim_start()
+            .chars()
+            .take_while(|c| matches!(c, '=' | '<' | '>' | '~' | '^'))
+            .collect();
+        format!("{}{}", operator, new_version)
     }
 }
 
@@ -580,6 +627,117 @@ my-dep = { version = \"1.0.0\" }\n";
         assert!(updated.contains("version = \"4.0.0\""));
     }
 
+    fn update_manifest(deps: &str, dep_name: &str, new_version: &str) -> (bool, String) {
+        let dir = TempDir::new().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        let content = format!("[package]\nname = \"test\"\nversion = \"1.0.0\"\n\n{deps}");
+        std::fs::write(&manifest, content).unwrap();
+        let modified = RustAdapter::update_dependency_version(
+            &manifest,
+            dep_name,
+            &Version::parse(new_version).unwrap(),
+        )
+        .unwrap();
+        (modified, std::fs::read_to_string(&manifest).unwrap())
+    }
+
+    #[test]
+    fn test_update_renamed_dependency() {
+        let (modified, updated) = update_manifest(
+            "[dependencies]\ncore = { package = \"z-core\", version = \"1.0.0\", path = \"../core\" }\n",
+            "z-core",
+            "2.0.0",
+        );
+        assert!(modified);
+        assert!(
+            updated.contains(
+                "core = { package = \"z-core\", version = \"2.0.0\", path = \"../core\" }"
+            ),
+            "{updated}"
+        );
+    }
+
+    #[test]
+    fn test_update_skips_dependency_renamed_to_other_package() {
+        let (modified, updated) = update_manifest(
+            "[dependencies]\nz-core = { package = \"other\", version = \"1.0.0\" }\n",
+            "z-core",
+            "2.0.0",
+        );
+        assert!(!modified);
+        assert!(updated.contains("version = \"1.0.0\""));
+    }
+
+    #[test]
+    fn test_update_target_specific_dependencies() {
+        let (modified, updated) = update_manifest(
+            "[target.'cfg(unix)'.dependencies]\nz-core = { version = \"1.0.0\" }\n\n\
+             [target.'cfg(windows)'.dev-dependencies]\nz-core = { version = \"1.0.0\" }\n\n\
+             [target.wasm32-unknown-unknown.build-dependencies.z-core]\nversion = \"1.0.0\"\n",
+            "z-core",
+            "1.1.0",
+        );
+        assert!(modified);
+        assert_eq!(
+            updated.matches("version = \"1.1.0\"").count(),
+            3,
+            "{updated}"
+        );
+    }
+
+    #[test]
+    fn test_update_preserves_requirement_operator() {
+        let cases = [
+            ("=1.0.0", "=2.0.0"),
+            ("~1.0", "~2.0.0"),
+            ("^1.0.0", "^2.0.0"),
+            (">=1.0.0", ">=2.0.0"),
+            ("1.0.0", "2.0.0"),
+        ];
+        for (current, expected) in cases {
+            let (modified, updated) = update_manifest(
+                &format!(
+                    "[dependencies]\nz-core = {{ version = \"{current}\", path = \"../core\" }}\n"
+                ),
+                "z-core",
+                "2.0.0",
+            );
+            assert!(modified, "{current}");
+            assert!(
+                updated.contains(&format!("version = \"{expected}\"")),
+                "{current}: {updated}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_update_skips_workspace_inherited_dependency() {
+        let (modified, updated) = update_manifest(
+            "[dependencies]\nz-core = { workspace = true }\n",
+            "z-core",
+            "2.0.0",
+        );
+        assert!(!modified);
+        assert!(updated.contains("z-core = { workspace = true }"));
+    }
+
+    #[test]
+    fn test_update_all_renamed_workspace_dependency() {
+        let dir = TempDir::new().unwrap();
+        let root_manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &root_manifest,
+            "[workspace]\nmembers = []\n\n[workspace.dependencies]\ncore = { package = \"z-core\", version = \"=1.0.0\", path = \"core\" }\n",
+        )
+        .unwrap();
+
+        let updates = HashMap::from([("z-core".to_string(), Version::new(1, 2, 0))]);
+        RustAdapter::update_all_dependency_versions(&[], dir.path(), &updates).unwrap();
+
+        let updated = std::fs::read_to_string(&root_manifest).unwrap();
+        assert!(updated.contains("version = \"=1.2.0\""), "{updated}");
+    }
+
     #[test]
     fn publish_dry_run_returns_success() {
         let dir = TempDir::new().unwrap();
@@ -596,6 +754,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: dir.path().to_path_buf(),
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         let result = RustAdapter::publish(&pkg, true, None).unwrap();
@@ -619,6 +778,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: dir.path().to_path_buf(),
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         // SAFETY: test-only, no concurrent access to this env var
@@ -645,6 +805,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: dir.path().to_path_buf(),
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         let result = RustAdapter::publish(&pkg, false, None).unwrap();
@@ -668,6 +829,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: dir.path().to_path_buf(),
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         // SAFETY: serialized test, so no other test reads this environment variable.
@@ -710,6 +872,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: package_dir,
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         // SAFETY: serialized test, so no other test reads this environment variable.
