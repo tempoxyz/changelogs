@@ -7,7 +7,7 @@ use crate::workspace::Workspace;
 use chrono::Utc;
 use semver::Version;
 use std::collections::{BTreeMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn get_github_url(dir: &Path) -> Option<String> {
@@ -220,7 +220,42 @@ pub fn write_changelogs_with_date(
     format: ChangelogFormat,
     date: &str,
 ) -> Result<()> {
+    let sections = render_sections_with_date(workspace, releases, changelogs, format, date);
+    write_sections(&sections, format)
+}
+
+/// Renders the changelog sections `write_changelogs` would add, dated today.
+pub fn render_sections(
+    workspace: &Workspace,
+    releases: &[PackageRelease],
+    changelogs: &[Changelog],
+    format: ChangelogFormat,
+) -> Vec<Section> {
+    let date = Utc::now().format("%Y-%m-%d").to_string();
+    render_sections_with_date(workspace, releases, changelogs, format, &date)
+}
+
+/// A changelog section that `version` prepends to a CHANGELOG.md file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    /// The CHANGELOG.md file the section goes into.
+    pub path: PathBuf,
+    /// The packages whose release the section describes.
+    pub packages: Vec<String>,
+    /// The section's markdown, starting with its `## ` heading.
+    pub text: String,
+}
+
+/// Renders the changelog sections for `releases` without writing them.
+pub fn render_sections_with_date(
+    workspace: &Workspace,
+    releases: &[PackageRelease],
+    changelogs: &[Changelog],
+    format: ChangelogFormat,
+    date: &str,
+) -> Vec<Section> {
     let changelog_dir = &workspace.changelog_dir;
+    let mut sections = Vec::new();
 
     match format {
         ChangelogFormat::PerCrate => {
@@ -233,8 +268,11 @@ pub fn write_changelogs_with_date(
                     entry.push_str(&entry_body);
                     entry.push('\n');
 
-                    let changelog_path = package.path.join("CHANGELOG.md");
-                    update_changelog(&changelog_path, &entry)?;
+                    sections.push(Section {
+                        path: package.path.join("CHANGELOG.md"),
+                        packages: vec![release.name.clone()],
+                        text: entry,
+                    });
                 }
             }
         }
@@ -254,17 +292,15 @@ pub fn write_changelogs_with_date(
                     .push(release);
             }
 
-            let mut combined_entry = String::new();
-
             // Newest version first, matching how entries are prepended.
             for (version, group) in by_version.iter().rev() {
-                if group.len() == 1 {
+                let text = if group.len() == 1 {
                     // Single release at this version — use existing per-package generation.
-                    let entry = generate_entry_with_date(group[0], changelogs, changelog_dir, date);
-                    combined_entry.push_str(&entry);
+                    generate_entry_with_date(group[0], changelogs, changelog_dir, date)
                 } else {
                     // Multiple releases share this version — merge into one heading
                     // and deduplicate changelog entries that appear in multiple packages.
+                    let mut combined_entry = String::new();
                     combined_entry.push_str(&format!("## {} ({})\n\n", version, date));
 
                     let github_url = get_github_url(&workspace.root);
@@ -355,17 +391,54 @@ pub fn write_changelogs_with_date(
                         }
                         combined_entry.push('\n');
                     }
-                }
+                    combined_entry
+                };
+                sections.push(Section {
+                    path: workspace.root.join("CHANGELOG.md"),
+                    packages: group.iter().map(|release| release.name.clone()).collect(),
+                    text,
+                });
             }
+        }
+    }
 
-            if !combined_entry.is_empty() {
-                let changelog_path = workspace.root.join("CHANGELOG.md");
-                update_changelog(&changelog_path, &combined_entry)?;
+    sections
+}
+
+/// Prepends rendered sections to their CHANGELOG.md files.
+pub fn write_sections(sections: &[Section], format: ChangelogFormat) -> Result<()> {
+    match format {
+        ChangelogFormat::PerCrate => {
+            for section in sections {
+                update_changelog(&section.path, &section.text)?;
+            }
+        }
+        ChangelogFormat::Root => {
+            let combined_entry: String = sections.iter().map(|s| s.text.as_str()).collect();
+            if let Some(section) = sections.first() {
+                update_changelog(&section.path, &combined_entry)?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Returns the body of the CHANGELOG.md section for `version` (without its
+/// heading), matching both per-crate (`` ## `name@version` ``) and root
+/// (`## version (date)`) headings.
+pub fn find_section(content: &str, name: &str, version: &Version) -> Option<String> {
+    let per_crate = format!("## `{}@{}`", name, version);
+    let root = format!("## {}", version);
+    let mut lines = content.lines();
+    lines.find(|line| {
+        line.trim_end() == per_crate
+            || line.strip_prefix(&root).is_some_and(|rest| {
+                rest.is_empty() || rest.starts_with(' ') || rest.starts_with('(')
+            })
+    })?;
+    let body: Vec<&str> = lines.take_while(|line| !line.starts_with("## ")).collect();
+    Some(body.join("\n").trim().to_string())
 }
 
 #[cfg(test)]
@@ -722,5 +795,20 @@ mod tests {
         .unwrap();
 
         assert!(!dir.path().join("CHANGELOG.md").exists());
+    }
+
+    #[test]
+    fn find_section_matches_exact_release() {
+        let content = "# Changelog\n\n## 1.1.0-rc1 (2025-01-20)\n\n- rc\n\n## 1.1.0 (2025-01-15)\n\n- stable\n\n## `lib@0.2.0`\n\n### Patch Changes\n\n- lib fix\n\n## 1.0.0\n\n- old\n";
+        let section = |name, version: &str| find_section(content, name, &version.parse().unwrap());
+
+        assert_eq!(section("app", "1.1.0").as_deref(), Some("- stable"));
+        assert_eq!(section("app", "1.1.0-rc1").as_deref(), Some("- rc"));
+        assert_eq!(
+            section("lib", "0.2.0").as_deref(),
+            Some("### Patch Changes\n\n- lib fix")
+        );
+        assert_eq!(section("app", "1.0.0").as_deref(), Some("- old"));
+        assert_eq!(section("app", "2.0.0"), None);
     }
 }

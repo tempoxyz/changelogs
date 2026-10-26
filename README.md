@@ -91,6 +91,16 @@ Or download directly from [GitHub Releases](https://github.com/wevm/changelogs/r
 | `version` | Apply version bumps and update changelogs |
 | `version --prerelease rc` | Apply prerelease bumps like `1.6.0-rc1`, then `1.6.0-rc2` |
 | `publish` | Publish unpublished packages to crates.io |
+| `notes <tag>` | Print the changelog section of a release tag, such as `v1.2.0` or `name@1.2.0` |
+
+### JSON output
+
+`version --json` (with or without `--dry-run` and `--prerelease`) and
+`publish --json` print a JSON document on stdout and their progress on stderr,
+for scripts such as the GitHub Action:
+
+- `version`: `{"format": "root" | "per-crate", "releases": [{"name", "old_version", "new_version", "bump", "is_promotion", "changelog_path", "notes"}], "unified_version"}`. `notes` is the changelog section added for the release, and `unified_version` is set in root format.
+- `publish`: `{"published": [{"name", "version", "tag"}], "skipped": [{"name", "version", "tag", "reason"}], "failed": [{"name", "version", "error"}], "tags_created": [...]}`. It is printed even when publishing fails, before the non-zero exit.
 
 ## Configuration
 

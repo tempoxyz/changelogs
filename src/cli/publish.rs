@@ -1,6 +1,7 @@
 use anyhow::Result;
 use changelogs::config::ChangelogFormat;
 use changelogs::graph::DependencyGraph;
+use changelogs::output::{self, FailedPackage, PublishOutput, PublishedPackage, SkippedPackage};
 use changelogs::{Config, Ecosystem, Package, PublishResult, SkipReason, Workspace};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
@@ -8,7 +9,25 @@ use std::process::Command;
 pub fn run_with_ecosystem(
     dry_run: bool,
     tag: Option<String>,
+    json: bool,
     ecosystem: Option<Ecosystem>,
+) -> Result<()> {
+    let mut report = PublishOutput::default();
+    let result = run(dry_run, tag, json, ecosystem, &mut report);
+    // Print the report even when publishing failed, so callers see which
+    // packages made it and which tags to push.
+    if json {
+        output::print_json(&report)?;
+    }
+    result
+}
+
+fn run(
+    dry_run: bool,
+    tag: Option<String>,
+    json: bool,
+    ecosystem: Option<Ecosystem>,
+    report: &mut PublishOutput,
 ) -> Result<()> {
     let workspace = Workspace::load_with_ecosystem(ecosystem)?;
     let config = Config::load(&workspace.changelog_dir)?;
@@ -20,14 +39,20 @@ pub fn run_with_ecosystem(
         .collect();
 
     if packages.is_empty() {
-        println!("No unpublished packages found");
+        say!(json, "No unpublished packages found");
         return Ok(());
     }
 
     let graph = DependencyGraph::from_workspace(&workspace);
     let packages = publish_order(&graph, packages);
 
-    println!("🚀 Publishing {} package(s)...\n", packages.len());
+    say!(json, "🚀 Publishing {} package(s)...\n", packages.len());
+
+    let unified_version = workspace.unified_package().map(|pkg| pkg.version.clone());
+    let release_tag = |pkg: &Package| match (&config.changelog.format, &unified_version) {
+        (ChangelogFormat::Root, Some(version)) => format!("v{}", version),
+        _ => workspace.tag_name(pkg),
+    };
 
     let mut published: Vec<&Package> = Vec::new();
     let mut skipped: Vec<&Package> = Vec::new();
@@ -36,47 +61,75 @@ pub fn run_with_ecosystem(
     let mut blocked: HashMap<String, String> = HashMap::new();
 
     for pkg in packages {
-        print!("  {} v{} ... ", pkg.name, pkg.version);
+        if json {
+            eprint!("  {} v{} ... ", pkg.name, pkg.version);
+        } else {
+            print!("  {} v{} ... ", pkg.name, pkg.version);
+        }
+        let mut fail = |error: String| {
+            report.failed.push(FailedPackage {
+                name: pkg.name.clone(),
+                version: pkg.version.to_string(),
+                error,
+            });
+            failed.push(pkg);
+        };
 
         if let Some(dependency) = blocked.get(&pkg.name) {
-            println!("⊘ (skipped: dependency {} failed)", dependency);
-            failed.push(pkg);
+            say!(json, "⊘ (skipped: dependency {} failed)", dependency);
+            fail(format!("dependency {} failed", dependency));
             continue;
         }
 
         match workspace.publish_package(pkg, dry_run, tag.as_deref()) {
             Ok(PublishResult::Success) => {
                 if dry_run {
-                    println!("(dry-run)");
+                    say!(json, "(dry-run)");
                 } else {
-                    println!("✓");
+                    say!(json, "✓");
                 }
+                report.published.push(PublishedPackage {
+                    name: pkg.name.clone(),
+                    version: pkg.version.to_string(),
+                    tag: release_tag(pkg),
+                });
                 published.push(pkg);
             }
             Ok(PublishResult::Skipped(reason)) => {
-                match reason {
-                    SkipReason::NoToken => println!("⊘ (no token)"),
-                    SkipReason::NotPublishable => println!("⊘ (registry publishing disabled)"),
-                }
+                let reason = match reason {
+                    SkipReason::NoToken => {
+                        say!(json, "⊘ (no token)");
+                        "no_token"
+                    }
+                    SkipReason::NotPublishable => {
+                        say!(json, "⊘ (registry publishing disabled)");
+                        "not_publishable"
+                    }
+                };
+                report.skipped.push(SkippedPackage {
+                    name: pkg.name.clone(),
+                    version: pkg.version.to_string(),
+                    tag: release_tag(pkg),
+                    reason: reason.to_string(),
+                });
                 skipped.push(pkg);
             }
             Ok(PublishResult::Failed) => {
-                println!("✗");
+                say!(json, "✗");
+                fail("publish failed".to_string());
                 block_dependents(&graph, &pkg.name, &mut blocked);
-                failed.push(pkg);
             }
             Err(e) => {
-                println!("✗");
+                say!(json, "✗");
                 eprintln!("    {}", e);
+                fail(e.to_string());
                 block_dependents(&graph, &pkg.name, &mut blocked);
-                failed.push(pkg);
             }
         }
     }
 
-    println!();
+    say!(json);
 
-    let mut tag_count = 0;
     if !dry_run {
         let taggable: Vec<&Package> = published.iter().chain(skipped.iter()).copied().collect();
         if !taggable.is_empty() {
@@ -84,15 +137,16 @@ pub fn run_with_ecosystem(
                 // Root format = single product: create one `v{version}` tag, only
                 // once every package is out, so a rerun retries the failed ones.
                 if !failed.is_empty() {
-                    println!(
+                    say!(
+                        json,
                         "Not tagging the release: {} package(s) failed",
                         failed.len()
                     );
                 } else if let Some(pkg) = workspace.unified_package() {
-                    tag_count = create_unified_tag(&workspace, &pkg.version)?;
+                    create_unified_tag(&workspace, &pkg.version, json, &mut report.tags_created)?;
                 }
             } else {
-                tag_count = create_git_tags(&workspace, &taggable)?;
+                create_git_tags(&workspace, &taggable, json, &mut report.tags_created)?;
             }
         }
     }
@@ -102,17 +156,23 @@ pub fn run_with_ecosystem(
     }
 
     if dry_run {
-        println!(
+        say!(
+            json,
             "Dry run complete. {} package(s) would be published.",
             published.len()
         );
     } else if !skipped.is_empty() && published.is_empty() {
-        println!(
+        say!(
+            json,
             "No packages published, but {} git tag(s) created",
-            tag_count
+            report.tags_created.len()
         );
     } else {
-        println!("Successfully published {} package(s)", published.len());
+        say!(
+            json,
+            "Successfully published {} package(s)",
+            published.len()
+        );
     }
 
     Ok(())
@@ -161,11 +221,17 @@ fn block_dependents(graph: &DependencyGraph, failed: &str, blocked: &mut HashMap
     }
 }
 
-fn create_unified_tag(workspace: &Workspace, version: &semver::Version) -> Result<usize> {
+/// Creates the root format's `v{version}` tag, adding it to `created`.
+fn create_unified_tag(
+    workspace: &Workspace,
+    version: &semver::Version,
+    json: bool,
+    created: &mut Vec<String>,
+) -> Result<()> {
     let tag = format!("v{}", version);
     if workspace.tag_exists(&tag) {
-        println!("Git tag {} already exists, skipping", tag);
-        return Ok(0);
+        say!(json, "Git tag {} already exists, skipping", tag);
+        return Ok(());
     }
 
     let output = Command::new("git")
@@ -175,23 +241,29 @@ fn create_unified_tag(workspace: &Workspace, version: &semver::Version) -> Resul
         .map_err(|e| anyhow::anyhow!("failed to run 'git tag': {}", e))?;
 
     if output.status.success() {
-        println!("Created git tag: {}", tag);
+        say!(json, "Created git tag: {}", tag);
+        created.push(tag);
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let error = stderr.trim();
         anyhow::bail!("failed to create git tag {tag}: {error}");
     }
 
-    println!("\nDon't forget to push tags: git push --follow-tags");
-    Ok(1)
+    say!(json, "\nDon't forget to push tags: git push --follow-tags");
+    Ok(())
 }
 
-fn create_git_tags(workspace: &Workspace, packages: &[&Package]) -> Result<usize> {
-    let mut created = 0;
+/// Creates each package's release tag, adding the new ones to `created`.
+fn create_git_tags(
+    workspace: &Workspace,
+    packages: &[&Package],
+    json: bool,
+    created: &mut Vec<String>,
+) -> Result<()> {
     for pkg in packages {
         let tag = workspace.tag_name(pkg);
         if workspace.tag_exists(&tag) {
-            println!("Git tag {} already exists, skipping", tag);
+            say!(json, "Git tag {} already exists, skipping", tag);
             continue;
         }
 
@@ -202,8 +274,8 @@ fn create_git_tags(workspace: &Workspace, packages: &[&Package]) -> Result<usize
             .map_err(|e| anyhow::anyhow!("failed to run 'git tag': {}", e))?;
 
         if output.status.success() {
-            println!("Created git tag: {}", tag);
-            created += 1;
+            say!(json, "Created git tag: {}", tag);
+            created.push(tag);
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let error = stderr.trim();
@@ -211,8 +283,8 @@ fn create_git_tags(workspace: &Workspace, packages: &[&Package]) -> Result<usize
         }
     }
 
-    println!("\nDon't forget to push tags: git push --follow-tags");
-    Ok(created)
+    say!(json, "\nDon't forget to push tags: git push --follow-tags");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -328,7 +400,9 @@ mod tests {
         let workspace = workspace(dir.path().to_str().unwrap());
         let version = Version::new(1, 2, 3);
 
-        assert_eq!(create_unified_tag(&workspace, &version).unwrap(), 1);
-        assert_eq!(create_unified_tag(&workspace, &version).unwrap(), 0);
+        let mut created = Vec::new();
+        create_unified_tag(&workspace, &version, false, &mut created).unwrap();
+        create_unified_tag(&workspace, &version, false, &mut created).unwrap();
+        assert_eq!(created, vec!["v1.2.3"]);
     }
 }
