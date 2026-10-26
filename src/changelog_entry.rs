@@ -1,8 +1,10 @@
 use crate::BumpType;
 use crate::error::{Error, Result};
 use rand::RngExt;
+use regex::Regex;
 
 use std::path::Path;
+use std::sync::LazyLock;
 
 const ADJECTIVES: &[&str] = &[
     "brave", "calm", "dark", "eager", "fair", "gentle", "happy", "icy", "jolly", "keen", "lively",
@@ -313,8 +315,10 @@ fn github_login_from_email(email: &str) -> Option<&str> {
 }
 
 fn extract_pr_number(message: &str) -> Option<u32> {
-    let re = regex::Regex::new(r"\(#(\d+)\)").ok()?;
-    re.captures(message)
+    static PR_NUMBER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\(#(\d+)\)").expect("valid PR number regex"));
+    PR_NUMBER
+        .captures(message)
         .and_then(|cap| cap.get(1))
         .and_then(|m| m.as_str().parse().ok())
 }

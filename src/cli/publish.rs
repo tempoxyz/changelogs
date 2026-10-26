@@ -1,19 +1,20 @@
 use anyhow::Result;
 use changelogs::config::ChangelogFormat;
+use changelogs::ecosystems;
 use changelogs::graph::DependencyGraph;
 use changelogs::output::{self, FailedPackage, PublishOutput, PublishedPackage, SkippedPackage};
-use changelogs::{Config, Ecosystem, Package, PublishResult, SkipReason, Workspace};
+use changelogs::{Ecosystem, Package, PublishResult, SkipReason, Workspace};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
 pub fn run_with_ecosystem(
     dry_run: bool,
-    tag: Option<String>,
+    registry: Option<String>,
     json: bool,
     ecosystem: Option<Ecosystem>,
 ) -> Result<()> {
     let mut report = PublishOutput::default();
-    let result = run(dry_run, tag, json, ecosystem, &mut report);
+    let result = run(dry_run, registry, json, ecosystem, &mut report);
     // Print the report even when publishing failed, so callers see which
     // packages made it and which tags to push.
     if json {
@@ -24,13 +25,13 @@ pub fn run_with_ecosystem(
 
 fn run(
     dry_run: bool,
-    tag: Option<String>,
+    registry: Option<String>,
     json: bool,
     ecosystem: Option<Ecosystem>,
     report: &mut PublishOutput,
 ) -> Result<()> {
     let workspace = Workspace::load_with_ecosystem(ecosystem)?;
-    let config = Config::load(&workspace.changelog_dir)?;
+    let config = &workspace.config;
 
     let all_publishable = workspace.get_publishable_packages()?;
     let packages: Vec<&Package> = all_publishable
@@ -47,12 +48,6 @@ fn run(
     let packages = publish_order(&graph, packages);
 
     say!(json, "🚀 Publishing {} package(s)...\n", packages.len());
-
-    let unified_version = workspace.unified_package().map(|pkg| pkg.version.clone());
-    let release_tag = |pkg: &Package| match (&config.changelog.format, &unified_version) {
-        (ChangelogFormat::Root, Some(version)) => format!("v{}", version),
-        _ => workspace.tag_name(pkg),
-    };
 
     let mut published: Vec<&Package> = Vec::new();
     let mut skipped: Vec<&Package> = Vec::new();
@@ -81,7 +76,7 @@ fn run(
             continue;
         }
 
-        match workspace.publish_package(pkg, dry_run, tag.as_deref()) {
+        match workspace.publish_package(pkg, dry_run, registry.as_deref()) {
             Ok(PublishResult::Success) => {
                 if dry_run {
                     say!(json, "(dry-run)");
@@ -91,7 +86,7 @@ fn run(
                 report.published.push(PublishedPackage {
                     name: pkg.name.clone(),
                     version: pkg.version.to_string(),
-                    tag: release_tag(pkg),
+                    tag: workspace.release_tag(pkg),
                 });
                 published.push(pkg);
             }
@@ -109,7 +104,7 @@ fn run(
                 report.skipped.push(SkippedPackage {
                     name: pkg.name.clone(),
                     version: pkg.version.to_string(),
-                    tag: release_tag(pkg),
+                    tag: workspace.release_tag(pkg),
                     reason: reason.to_string(),
                 });
                 skipped.push(pkg);
@@ -228,7 +223,34 @@ fn create_unified_tag(
     json: bool,
     created: &mut Vec<String>,
 ) -> Result<()> {
-    let tag = format!("v{}", version);
+    create_tag(workspace, ecosystems::root_tag_name(version), json, created)?;
+    say!(json, "\nDon't forget to push tags: git push --follow-tags");
+    Ok(())
+}
+
+/// Creates each package's release tag, adding the new ones to `created`.
+fn create_git_tags(
+    workspace: &Workspace,
+    packages: &[&Package],
+    json: bool,
+    created: &mut Vec<String>,
+) -> Result<()> {
+    for pkg in packages {
+        create_tag(workspace, workspace.tag_name(pkg), json, created)?;
+    }
+
+    say!(json, "\nDon't forget to push tags: git push --follow-tags");
+    Ok(())
+}
+
+/// Creates the annotated release tag `tag` unless it exists, adding it to
+/// `created`.
+fn create_tag(
+    workspace: &Workspace,
+    tag: String,
+    json: bool,
+    created: &mut Vec<String>,
+) -> Result<()> {
     if workspace.tag_exists(&tag) {
         say!(json, "Git tag {} already exists, skipping", tag);
         return Ok(());
@@ -243,53 +265,18 @@ fn create_unified_tag(
     if output.status.success() {
         say!(json, "Created git tag: {}", tag);
         created.push(tag);
+        Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let error = stderr.trim();
         anyhow::bail!("failed to create git tag {tag}: {error}");
     }
-
-    say!(json, "\nDon't forget to push tags: git push --follow-tags");
-    Ok(())
-}
-
-/// Creates each package's release tag, adding the new ones to `created`.
-fn create_git_tags(
-    workspace: &Workspace,
-    packages: &[&Package],
-    json: bool,
-    created: &mut Vec<String>,
-) -> Result<()> {
-    for pkg in packages {
-        let tag = workspace.tag_name(pkg);
-        if workspace.tag_exists(&tag) {
-            say!(json, "Git tag {} already exists, skipping", tag);
-            continue;
-        }
-
-        let output = Command::new("git")
-            .args(["tag", "-a", &tag, "-m", &format!("Release {}", tag)])
-            .current_dir(&workspace.root)
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to run 'git tag': {}", e))?;
-
-        if output.status.success() {
-            say!(json, "Created git tag: {}", tag);
-            created.push(tag);
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let error = stderr.trim();
-            anyhow::bail!("failed to create git tag {tag}: {error}");
-        }
-    }
-
-    say!(json, "\nDon't forget to push tags: git push --follow-tags");
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use changelogs::Config;
     use semver::Version;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -308,6 +295,7 @@ mod tests {
     fn package(name: &str, version: &str, path: &str) -> Package {
         Package {
             dependencies: vec![],
+            publishable: true,
             manifest_path: PathBuf::from(path).join("Cargo.toml"),
             name: name.to_string(),
             path: PathBuf::from(path),
@@ -318,7 +306,7 @@ mod tests {
     fn workspace(root: &str) -> Workspace {
         let root = PathBuf::from(root);
         Workspace {
-            changelog_dir: root.join(".changelog"),
+            config: Config::default(),
             ecosystem: Ecosystem::Rust,
             packages: vec![],
             root,

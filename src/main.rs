@@ -44,15 +44,16 @@ enum Commands {
     /// Initialize changelogs in this workspace
     Init,
 
-    /// Publish unpublished packages to crates.io
+    /// Publish unpublished packages to their registry (crates.io, PyPI) and tag the releases
     Publish {
         /// Perform a dry run without actually publishing
         #[arg(long)]
         dry_run: bool,
 
-        /// Registry to publish to
-        #[arg(long)]
-        tag: Option<String>,
+        /// Registry to publish to instead of crates.io or PyPI: a Cargo registry name, or a PyPI
+        /// repository name or URL
+        #[arg(long, alias = "tag")]
+        registry: Option<String>,
 
         /// Print the results as JSON on stdout (human output goes to stderr)
         #[arg(long)]
@@ -104,9 +105,11 @@ fn main() -> Result<()> {
         Commands::Doctor => cli::doctor::run(cli.ecosystem)?,
         Commands::Init => cli::init::run(cli.ecosystem)?,
         Commands::Notes { tag } => cli::notes::run(&tag, cli.ecosystem)?,
-        Commands::Publish { dry_run, tag, json } => {
-            cli::publish::run_with_ecosystem(dry_run, tag, json, cli.ecosystem)?
-        }
+        Commands::Publish {
+            dry_run,
+            registry,
+            json,
+        } => cli::publish::run_with_ecosystem(dry_run, registry, json, cli.ecosystem)?,
         Commands::Status { verbose } => cli::status::run(verbose, cli.ecosystem)?,
         Commands::Up => cli::up::run()?,
         Commands::Version {

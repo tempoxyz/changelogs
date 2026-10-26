@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use changelogs::Ecosystem;
 use changelogs::changelog_entry;
 use changelogs::changelog_writer::{self, Section};
-use changelogs::config::{ChangelogFormat, Config};
+use changelogs::config::ChangelogFormat;
 use changelogs::error::Error;
 use changelogs::output::{self, VersionOutput, VersionRelease};
 use changelogs::plan::{self, ReleasePlan};
@@ -32,8 +32,8 @@ pub fn run(
 
     let changelog_dir = workspace.changelog_dir();
     let changelogs = changelog_entry::read_all(&changelog_dir)?;
-    let config = Config::load(&changelog_dir)?;
-    let unknown = plan::unknown_package_refs(&workspace, &changelogs, &config);
+    let config = &workspace.config;
+    let unknown = plan::unknown_package_refs(&workspace, &changelogs, config);
     if !unknown.is_empty() {
         let details = unknown
             .iter()
@@ -54,9 +54,9 @@ pub fn run(
 
     let has_changelogs = !changelogs.is_empty();
     let release_plan = if has_changelogs {
-        plan::assemble_with_prerelease(&workspace, changelogs.clone(), &config, prerelease.as_ref())
+        plan::assemble_with_prerelease(&workspace, changelogs.clone(), config, prerelease.as_ref())
     } else if prerelease.is_none() {
-        plan::assemble_stable_promotions(&workspace, &config)
+        plan::assemble_stable_promotions(&workspace, config)
     } else {
         say!(json, "{} No changelogs found", style("ℹ").blue().bold());
         return print_version_json(json, &workspace, config.changelog.format, None, &[]);

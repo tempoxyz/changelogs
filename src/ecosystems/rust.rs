@@ -186,6 +186,43 @@ impl EcosystemAdapter for RustAdapter {
             stderr.trim(),
         )))
     }
+
+    fn update_all_dependency_versions(
+        packages: &[Package],
+        root: &Path,
+        updates: &HashMap<String, Version>,
+    ) -> Result<()> {
+        for package in packages {
+            for (dep_name, new_version) in updates {
+                Self::update_dependency_version(&package.manifest_path, dep_name, new_version)?;
+            }
+        }
+
+        let root_manifest = root.join("Cargo.toml");
+        if !root_manifest.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&root_manifest)?;
+        let mut doc: DocumentMut = content.parse()?;
+        let mut modified = false;
+
+        if let Some(deps) = doc
+            .get_mut("workspace")
+            .and_then(|w| w.get_mut("dependencies"))
+            .and_then(|d| d.as_table_like_mut())
+        {
+            for (dep_name, new_version) in updates {
+                modified |= Self::update_dep_in_table(deps, dep_name, new_version);
+            }
+        }
+
+        if modified {
+            std::fs::write(&root_manifest, doc.to_string())?;
+        }
+
+        Ok(())
+    }
 }
 
 impl RustAdapter {
@@ -272,6 +309,7 @@ impl RustAdapter {
                     .into_std_path_buf(),
                 manifest_path: package.manifest_path.clone().into_std_path_buf(),
                 dependencies: deps,
+                publishable: Self::is_registry_publishable(package),
             });
         }
 
@@ -403,43 +441,6 @@ impl RustAdapter {
             .take_while(|c| matches!(c, '=' | '<' | '>' | '~' | '^'))
             .collect();
         format!("{}{}", operator, new_version)
-    }
-
-    pub fn update_all_dependency_versions(
-        packages: &[Package],
-        root: &Path,
-        updates: &HashMap<String, Version>,
-    ) -> Result<()> {
-        for package in packages {
-            for (dep_name, new_version) in updates {
-                Self::update_dependency_version(&package.manifest_path, dep_name, new_version)?;
-            }
-        }
-
-        let root_manifest = root.join("Cargo.toml");
-        if !root_manifest.exists() {
-            return Ok(());
-        }
-
-        let content = std::fs::read_to_string(&root_manifest)?;
-        let mut doc: DocumentMut = content.parse()?;
-        let mut modified = false;
-
-        if let Some(deps) = doc
-            .get_mut("workspace")
-            .and_then(|w| w.get_mut("dependencies"))
-            .and_then(|d| d.as_table_like_mut())
-        {
-            for (dep_name, new_version) in updates {
-                modified |= Self::update_dep_in_table(deps, dep_name, new_version);
-            }
-        }
-
-        if modified {
-            std::fs::write(&root_manifest, doc.to_string())?;
-        }
-
-        Ok(())
     }
 }
 
@@ -753,6 +754,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: dir.path().to_path_buf(),
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         let result = RustAdapter::publish(&pkg, true, None).unwrap();
@@ -776,6 +778,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: dir.path().to_path_buf(),
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         // SAFETY: test-only, no concurrent access to this env var
@@ -802,6 +805,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: dir.path().to_path_buf(),
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         let result = RustAdapter::publish(&pkg, false, None).unwrap();
@@ -825,6 +829,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: dir.path().to_path_buf(),
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         // SAFETY: serialized test, so no other test reads this environment variable.
@@ -867,6 +872,7 @@ my-dep = { version = \"1.0.0\" }\n";
             path: package_dir,
             manifest_path: manifest,
             dependencies: vec![],
+            publishable: true,
         };
 
         // SAFETY: serialized test, so no other test reads this environment variable.
