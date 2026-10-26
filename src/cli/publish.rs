@@ -1,6 +1,8 @@
 use anyhow::Result;
 use changelogs::config::ChangelogFormat;
+use changelogs::graph::DependencyGraph;
 use changelogs::{Config, Ecosystem, Package, PublishResult, SkipReason, Workspace};
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
 pub fn run_with_ecosystem(
@@ -22,14 +24,25 @@ pub fn run_with_ecosystem(
         return Ok(());
     }
 
+    let graph = DependencyGraph::from_workspace(&workspace);
+    let packages = publish_order(&graph, packages);
+
     println!("🚀 Publishing {} package(s)...\n", packages.len());
 
     let mut published: Vec<&Package> = Vec::new();
     let mut skipped: Vec<&Package> = Vec::new();
     let mut failed: Vec<&Package> = Vec::new();
+    // Dependent package name -> the failed dependency it waits on.
+    let mut blocked: HashMap<String, String> = HashMap::new();
 
     for pkg in packages {
         print!("  {} v{} ... ", pkg.name, pkg.version);
+
+        if let Some(dependency) = blocked.get(&pkg.name) {
+            println!("⊘ (skipped: dependency {} failed)", dependency);
+            failed.push(pkg);
+            continue;
+        }
 
         match workspace.publish_package(pkg, dry_run, tag.as_deref()) {
             Ok(PublishResult::Success) => {
@@ -49,11 +62,13 @@ pub fn run_with_ecosystem(
             }
             Ok(PublishResult::Failed) => {
                 println!("✗");
+                block_dependents(&graph, &pkg.name, &mut blocked);
                 failed.push(pkg);
             }
             Err(e) => {
                 println!("✗");
                 eprintln!("    {}", e);
+                block_dependents(&graph, &pkg.name, &mut blocked);
                 failed.push(pkg);
             }
         }
@@ -66,8 +81,14 @@ pub fn run_with_ecosystem(
         let taggable: Vec<&Package> = published.iter().chain(skipped.iter()).copied().collect();
         if !taggable.is_empty() {
             if config.changelog.format == ChangelogFormat::Root {
-                // Root format = single product: create one `v{version}` tag
-                if let Some(pkg) = workspace.unified_package() {
+                // Root format = single product: create one `v{version}` tag, only
+                // once every package is out, so a rerun retries the failed ones.
+                if !failed.is_empty() {
+                    println!(
+                        "Not tagging the release: {} package(s) failed",
+                        failed.len()
+                    );
+                } else if let Some(pkg) = workspace.unified_package() {
                     tag_count = create_unified_tag(&workspace, &pkg.version)?;
                 }
             } else {
@@ -97,8 +118,55 @@ pub fn run_with_ecosystem(
     Ok(())
 }
 
+/// Orders packages so each one's workspace dependencies are published first,
+/// keeping the input order otherwise.
+fn publish_order<'a>(graph: &DependencyGraph, packages: Vec<&'a Package>) -> Vec<&'a Package> {
+    fn visit<'a>(
+        graph: &DependencyGraph,
+        name: &str,
+        by_name: &HashMap<&str, &'a Package>,
+        visited: &mut HashSet<String>,
+        ordered: &mut Vec<&'a Package>,
+    ) {
+        if !visited.insert(name.to_string()) {
+            return;
+        }
+        let mut dependencies = graph.dependencies(name);
+        dependencies.sort();
+        for dependency in &dependencies {
+            visit(graph, dependency, by_name, visited, ordered);
+        }
+        if let Some(pkg) = by_name.get(name) {
+            ordered.push(pkg);
+        }
+    }
+
+    let by_name: HashMap<&str, &Package> = packages
+        .iter()
+        .map(|pkg| (pkg.name.as_str(), *pkg))
+        .collect();
+    let mut visited = HashSet::new();
+    let mut ordered = Vec::with_capacity(packages.len());
+    for pkg in &packages {
+        visit(graph, &pkg.name, &by_name, &mut visited, &mut ordered);
+    }
+    ordered
+}
+
+fn block_dependents(graph: &DependencyGraph, failed: &str, blocked: &mut HashMap<String, String>) {
+    for dependent in graph.all_dependents(failed) {
+        blocked
+            .entry(dependent)
+            .or_insert_with(|| failed.to_string());
+    }
+}
+
 fn create_unified_tag(workspace: &Workspace, version: &semver::Version) -> Result<usize> {
     let tag = format!("v{}", version);
+    if workspace.tag_exists(&tag) {
+        println!("Git tag {} already exists, skipping", tag);
+        return Ok(0);
+    }
 
     let output = Command::new("git")
         .args(["tag", "-a", &tag, "-m", &format!("Release {}", tag)])
@@ -122,6 +190,10 @@ fn create_git_tags(workspace: &Workspace, packages: &[&Package]) -> Result<usize
     let mut created = 0;
     for pkg in packages {
         let tag = workspace.tag_name(pkg);
+        if workspace.tag_exists(&tag) {
+            println!("Git tag {} already exists, skipping", tag);
+            continue;
+        }
 
         let output = Command::new("git")
             .args(["tag", "-a", &tag, "-m", &format!("Release {}", tag)])
@@ -207,7 +279,44 @@ mod tests {
     }
 
     #[test]
-    fn unified_tag_reports_existing_tag_failure() {
+    fn publish_order_puts_dependencies_first() {
+        let mut workspace = workspace("/repo");
+        let mut app = package("app", "1.0.0", "/repo/crates/a-app");
+        app.dependencies = vec!["lib".to_string()];
+        let mut cli = package("cli", "1.0.0", "/repo/crates/b-cli");
+        cli.dependencies = vec!["app".to_string(), "lib".to_string()];
+        let lib = package("lib", "1.0.0", "/repo/crates/z-lib");
+        workspace.packages = vec![app, cli, lib];
+        let graph = DependencyGraph::from_workspace(&workspace);
+
+        let ordered = publish_order(&graph, workspace.packages.iter().collect());
+
+        let names: Vec<&str> = ordered.iter().map(|pkg| pkg.name.as_str()).collect();
+        assert_eq!(names, vec!["lib", "app", "cli"]);
+    }
+
+    #[test]
+    fn failed_package_blocks_transitive_dependents() {
+        let mut workspace = workspace("/repo");
+        let mut app = package("app", "1.0.0", "/repo/crates/a-app");
+        app.dependencies = vec!["lib".to_string()];
+        let mut cli = package("cli", "1.0.0", "/repo/crates/b-cli");
+        cli.dependencies = vec!["app".to_string()];
+        let other = package("other", "1.0.0", "/repo/crates/other");
+        let lib = package("lib", "1.0.0", "/repo/crates/z-lib");
+        workspace.packages = vec![app, cli, other, lib];
+        let graph = DependencyGraph::from_workspace(&workspace);
+        let mut blocked = HashMap::new();
+
+        block_dependents(&graph, "lib", &mut blocked);
+
+        assert_eq!(blocked.get("app").map(String::as_str), Some("lib"));
+        assert_eq!(blocked.get("cli").map(String::as_str), Some("lib"));
+        assert!(!blocked.contains_key("other"));
+    }
+
+    #[test]
+    fn unified_tag_skips_existing_tag() {
         let dir = TempDir::new().unwrap();
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
@@ -220,6 +329,6 @@ mod tests {
         let version = Version::new(1, 2, 3);
 
         assert_eq!(create_unified_tag(&workspace, &version).unwrap(), 1);
-        assert!(create_unified_tag(&workspace, &version).is_err());
+        assert_eq!(create_unified_tag(&workspace, &version).unwrap(), 0);
     }
 }

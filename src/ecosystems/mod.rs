@@ -257,6 +257,31 @@ pub fn tag_name(ecosystem: Ecosystem, pkg: &Package) -> String {
     }
 }
 
+/// Returns whether `refs/tags/{tag}` exists in the git repository at `dir`.
+pub fn git_tag_exists(dir: &Path, tag: &str) -> bool {
+    std::process::Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/tags/{tag}"),
+        ])
+        .current_dir(dir)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Base URL of a registry API, overridable through `env_var` so tests can
+/// point registry lookups at a local server.
+fn registry_base_url(env_var: &str, default: &str) -> String {
+    std::env::var(env_var)
+        .ok()
+        .filter(|url| !url.is_empty())
+        .map(|url| url.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| default.to_string())
+}
+
 fn registry_agent() -> ureq::Agent {
     // Aegis installs its CA in the runner's system store, not ureq's bundled roots.
     ureq::Agent::config_builder()

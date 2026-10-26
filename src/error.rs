@@ -49,6 +49,9 @@ pub enum Error {
     #[error("publish failed: {0}")]
     PublishFailed(String),
 
+    #[error("failed to check crates.io index: {0}")]
+    CratesIoCheckFailed(String),
+
     #[error("failed to check PyPI: {0}")]
     PypiCheckFailed(String),
 

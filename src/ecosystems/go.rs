@@ -117,6 +117,11 @@ impl EcosystemAdapter for GoAdapter {
         if *version == Version::new(0, 0, 0) {
             return Ok(true);
         }
+        // A local release tag means the version is out even when the proxy has
+        // not fetched it yet.
+        if super::git_tag_exists(Path::new("."), &format!("v{version}")) {
+            return Ok(true);
+        }
         check_proxy_published(name, version)
     }
 
@@ -352,7 +357,8 @@ fn latest_git_tag_version(repo_dir: &Path) -> Option<Version> {
 
 fn check_proxy_published(module_path: &str, version: &Version) -> Result<bool> {
     let escaped = escape_module_path(module_path);
-    let url = format!("https://proxy.golang.org/{}/@v/v{}.info", escaped, version);
+    let base = super::registry_base_url("CHANGELOGS_GO_PROXY_URL", "https://proxy.golang.org");
+    let url = format!("{}/{}/@v/v{}.info", base, escaped, version);
     match super::registry_agent().get(&url).call() {
         Ok(_) => Ok(true),
         Err(ureq::Error::StatusCode(404)) => Ok(false),

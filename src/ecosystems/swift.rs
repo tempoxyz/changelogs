@@ -97,7 +97,10 @@ impl EcosystemAdapter for SwiftAdapter {
             return Ok(true);
         }
 
-        Ok(git_tag_exists(version))
+        Ok(super::git_tag_exists(
+            Path::new("."),
+            &format!("v{version}"),
+        ))
     }
 
     fn publish(_pkg: &Package, _dry_run: bool, _registry: Option<&str>) -> Result<PublishResult> {
@@ -238,22 +241,6 @@ fn latest_git_tag_version(repo_dir: &Path) -> Option<Version> {
         }
     }
     None
-}
-
-fn git_tag_exists(version: &Version) -> bool {
-    let tag = format!("v{}", version);
-    let output = Command::new("git")
-        .args([
-            "rev-parse",
-            "--quiet",
-            "--verify",
-            &format!("refs/tags/{tag}"),
-        ])
-        .output();
-
-    output
-        .map(|output| output.status.success())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
