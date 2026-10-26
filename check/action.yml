@@ -36,7 +36,21 @@ runs:
       env:
         REF_INPUT: ${{ inputs.ref }}
       run: |
-        CHANGELOGS=$(git diff --name-only "origin/$REF_INPUT"...HEAD -- '.changelog/*.md' | grep -v config.toml || true)
+        if [ -z "$REF_INPUT" ]; then
+          echo "::error::No base ref to compare against. Run on pull_request events or set the 'ref' input."
+          exit 1
+        fi
+        base="origin/$REF_INPUT"
+        if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+          echo "$base not found locally; fetching it"
+          git fetch --no-tags --depth=1 origin "+refs/heads/$REF_INPUT:refs/remotes/$base" || true
+        fi
+        if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null || ! git merge-base "$base" HEAD >/dev/null; then
+          echo "::error::Cannot compare against $base. Check out the repository with actions/checkout and 'fetch-depth: 0'."
+          exit 1
+        fi
+        # Only added, modified or renamed entries count: a deleted changelog is not one.
+        CHANGELOGS=$(git diff --name-only --diff-filter=AMR "$base"...HEAD -- '.changelog/*.md' | grep -v config.toml || true)
         if [ -n "$CHANGELOGS" ]; then
           echo "found=true" >> $GITHUB_OUTPUT
           echo "changelog_files<<EOF" >> $GITHUB_OUTPUT
@@ -46,10 +60,42 @@ runs:
           echo "found=false" >> $GITHUB_OUTPUT
         fi
 
-    - name: Install changelogs
+    # Build the CLI from this action's own checkout, so a pinned action ref runs
+    # matching code. The cache key matches the release action's.
+    - name: Hash changelogs source
+      id: source
       if: steps.check.outputs.found == 'false' && inputs.ai != ''
       shell: bash
-      run: curl -sSL https://changelogs.sh | sh
+      env:
+        ACTION_PATH: ${{ github.action_path }}/..
+      run: |
+        source_hash="$(
+          {
+            printf '%s\n' "$ACTION_PATH/Cargo.toml" "$ACTION_PATH/Cargo.lock"
+            find "$ACTION_PATH/src" -type f
+          } |
+            LC_ALL=C sort |
+            while IFS= read -r file; do
+              git hash-object "$file"
+            done |
+            git hash-object --stdin
+        )"
+        echo "hash=$source_hash" >> "$GITHUB_OUTPUT"
+
+    - name: Cache changelogs binary
+      id: cache
+      if: steps.check.outputs.found == 'false' && inputs.ai != ''
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cargo/bin/changelogs
+        key: changelogs-locked-${{ runner.os }}-${{ runner.arch }}-${{ steps.source.outputs.hash }}
+
+    - name: Install changelogs
+      if: steps.check.outputs.found == 'false' && inputs.ai != '' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}/..
+      run: cargo install --locked --path "$ACTION_PATH"
 
     - name: Generate changelog with AI
       id: ai
@@ -60,7 +106,7 @@ runs:
         ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
         REF_INPUT: ${{ inputs.ref }}
       run: |
-        export PATH="$HOME/.local/bin:$PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
         
         # Run changelogs add with AI
         CMD=(changelogs)
