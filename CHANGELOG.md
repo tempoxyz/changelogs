@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11.0 (2026-10-26)
+
+### Minor Changes
+
+- Added `--json` to `version` and `publish` for machine-readable output, and a `notes <tag>` command that prints a release's changelog section. The GitHub Action now uses them instead of parsing human output, so version PR bodies show per-crate changelogs and release notes come from the right CHANGELOG.md. (by @brendanjryan, [#192](https://github.com/tempoxyz/changelogs/pull/192))
+- Added a `draft-releases` input and `releaseTags` output to the release action so binaries can be attached before a release becomes immutable. The action now fails when a GitHub release cannot be created, pushes tags even if publishing fails partway, and the check action fails clearly when the base ref is missing, ignores deleted changelog entries, and builds the CLI from its own ref. (by @brendanjryan, [#189](https://github.com/tempoxyz/changelogs/pull/189))
+
+### Patch Changes
+
+- Fixed release planning so fixed groups always end on one version (including after dependent bumps), prerelease bumps start a new rc cycle when the change outgrows the current one, and Cargo dependency rewrites cover renamed and target-specific dependencies while keeping requirement operators. `changelogs version` now refuses to run when an entry references an unknown package or has an invalid bump value, and changelog links and authors are resolved from the workspace repository, with GitHub handles taken from noreply emails. (by @brendanjryan, [#192](https://github.com/tempoxyz/changelogs/pull/192))
+- Renamed the `publish --tag` option to `--registry`, which is what it sets; `--tag` keeps working as a hidden alias. `version` now looks up each changelog entry's commit and pull request once instead of once per package it releases, so large workspaces render changelogs with far fewer git calls. (by @brendanjryan, [#192](https://github.com/tempoxyz/changelogs/pull/192))
+- `changelogs publish` is now safe to rerun: existing release tags are skipped instead of failing, packages publish in dependency order (dependents of a failed package are skipped), and registry checks look up the exact version on crates.io, PyPI and the Go proxy. In root format the release tag is only created once every package published. (by @brendanjryan, [#189](https://github.com/tempoxyz/changelogs/pull/189))
+- Return a `VersionNotFound` error instead of panicking when a `Cargo.toml` has no `[package].version`. (by @brendanjryan, [#189](https://github.com/tempoxyz/changelogs/pull/189))
+
 ## 0.10.0 (2026-10-25)
 
 ### Minor Changes
