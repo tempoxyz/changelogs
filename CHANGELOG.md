@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.1 (2026-10-28)
+
+### Patch Changes
+
+- The install script now downloads the newest release's binaries instead of the `latest` prerelease, which immutable releases had frozen at an old build. (by @brendanjryan, [#199](https://github.com/tempoxyz/changelogs/pull/199))
+- Update dependencies. (by @grandizzy, [#197](https://github.com/tempoxyz/changelogs/pull/197))
+
 ## 0.11.0 (2026-10-26)
 
 ### Minor Changes

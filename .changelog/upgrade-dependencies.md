@@ -1,5 +1,0 @@
----
-changelogs: patch
----
-
-Update dependencies.
