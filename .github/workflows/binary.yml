@@ -87,5 +87,8 @@ jobs:
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber artifacts/changelogs-*
           if [ "$is_draft" = "true" ]; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            # make_latest=legacy keeps the highest version as Latest, so a
+            # re-dispatched older draft doesn't take over the install URL.
+            id=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq '.databaseId')
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false -f make_latest=legacy > /dev/null
           fi

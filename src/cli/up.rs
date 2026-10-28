@@ -11,7 +11,7 @@ pub fn run() -> Result<()> {
     let arch = detect_arch()?;
     let asset = format!("changelogs-{}-{}", os, arch);
     let url = format!(
-        "https://github.com/wevm/changelogs-rs/releases/download/latest/{}",
+        "https://github.com/tempoxyz/changelogs/releases/latest/download/{}",
         asset
     );
 
