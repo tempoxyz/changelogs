@@ -46,7 +46,7 @@ echo "Detected: ${OS}/${ARCH}"
 echo "Installing changelogs ${VERSION}..."
 
 if [ "$VERSION" = "latest" ]; then
-    URL="https://github.com/${REPO}/releases/download/latest/${ASSET}"
+    URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
 else
     URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
 fi

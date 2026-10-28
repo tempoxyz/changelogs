@@ -82,16 +82,10 @@ jobs:
         run: |
           is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
           if [ "$is_draft" != "true" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.immutable')" = "true" ]; then
-            echo "::warning::Release $TAG is already published and immutable, so its assets cannot change. Only the latest release is refreshed."
+            echo "::warning::Release $TAG is already published and immutable, so its assets cannot change."
             exit 0
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber artifacts/changelogs-*
           if [ "$is_draft" = "true" ]; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
           fi
-      - uses: tempoxyz/gh-actions/actions/gh-release@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
-        with:
-          tag: latest
-          prerelease: true
-          files: artifacts/*
-          body: "Latest build from ${{ inputs.tag }}. Updated on every release."

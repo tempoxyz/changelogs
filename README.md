@@ -76,9 +76,10 @@ Or download directly from [GitHub Releases](https://github.com/wevm/changelogs/r
 
 | Platform | Download |
 |----------|----------|
-| Linux (x86_64) | [changelogs-linux-amd64](https://github.com/wevm/changelogs/releases/latest/download/changelogs-linux-amd64) |
-| macOS (Intel) | [changelogs-darwin-amd64](https://github.com/wevm/changelogs/releases/latest/download/changelogs-darwin-amd64) |
-| macOS (Apple Silicon) | [changelogs-darwin-arm64](https://github.com/wevm/changelogs/releases/latest/download/changelogs-darwin-arm64) |
+| Linux (x86_64) | [changelogs-linux-amd64](https://github.com/tempoxyz/changelogs/releases/latest/download/changelogs-linux-amd64) |
+| Linux (ARM64) | [changelogs-linux-arm64](https://github.com/tempoxyz/changelogs/releases/latest/download/changelogs-linux-arm64) |
+| macOS (Intel) | [changelogs-darwin-amd64](https://github.com/tempoxyz/changelogs/releases/latest/download/changelogs-darwin-amd64) |
+| macOS (Apple Silicon) | [changelogs-darwin-arm64](https://github.com/tempoxyz/changelogs/releases/latest/download/changelogs-darwin-arm64) |
 
 ## Commands
 
