@@ -1,0 +1,5 @@
+---
+changelogs: patch
+---
+
+Update dependencies.
