@@ -132,9 +132,16 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
       run: gh auth setup-git --force --hostname github.com
 
-    - name: Fetch release tags
+    # Changelog entries are credited to the commit that added them, which a
+    # shallow clone reports as its newest commit for every file.
+    - name: Fetch history and release tags
       shell: bash
-      run: git fetch --force --tags origin
+      run: |
+        if [[ "$(git rev-parse --is-shallow-repository)" == true ]]; then
+          git fetch --force --tags --unshallow origin
+        else
+          git fetch --force --tags origin
+        fi
 
     - name: Check for changelogs
       id: check
