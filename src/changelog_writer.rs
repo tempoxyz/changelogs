@@ -32,6 +32,16 @@ fn get_github_url(dir: &Path) -> Option<String> {
     }
 }
 
+/// Whether `dir` is in a shallow clone, whose history can't tell which commit
+/// added a changelog entry.
+fn is_shallow_repository(dir: &Path) -> bool {
+    Command::new("git")
+        .current_dir(dir)
+        .args(["rev-parse", "--is-shallow-repository"])
+        .output()
+        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
 /// The link and authors shown after a change, from the commit that added its
 /// changelog entry.
 #[derive(Debug, Default)]
@@ -55,6 +65,11 @@ fn resolve_metadata<'a>(
     let Some(base) = get_github_url(changelog_dir) else {
         return metadata;
     };
+    if is_shallow_repository(changelog_dir) {
+        eprintln!(
+            "warning: the repository is a shallow clone, so changelog entries may be              credited to the wrong commit, pull request and authors; fetch full history              (git fetch --unshallow, or actions/checkout with fetch-depth: 0)"
+        );
+    }
 
     for id in ids {
         metadata.entry(id).or_insert_with(|| {
