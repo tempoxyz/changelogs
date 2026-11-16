@@ -200,7 +200,7 @@ impl EcosystemAdapter for RustAdapter {
 
         let root_manifest = root.join("Cargo.toml");
         if !root_manifest.exists() {
-            return Ok(());
+            return Self::sync_lockfile(root, updates);
         }
 
         let content = std::fs::read_to_string(&root_manifest)?;
@@ -221,11 +221,57 @@ impl EcosystemAdapter for RustAdapter {
             std::fs::write(&root_manifest, doc.to_string())?;
         }
 
-        Ok(())
+        Self::sync_lockfile(root, updates)
     }
 }
 
 impl RustAdapter {
+    /// Sets the version of each updated workspace package in `Cargo.lock`.
+    ///
+    /// `discover` runs `cargo metadata`, which pins the lock file to the old
+    /// versions before they are bumped. Without this step, a release leaves
+    /// `Cargo.lock` one version behind `Cargo.toml`, and builds with
+    /// `--locked` fail. Only local packages (entries without a `source`) change.
+    fn sync_lockfile(root: &Path, updates: &HashMap<String, Version>) -> Result<()> {
+        let lockfile = root.join("Cargo.lock");
+        if !lockfile.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&lockfile)?;
+        let mut doc: DocumentMut = content.parse()?;
+        let mut modified = false;
+
+        if let Some(packages) = doc
+            .get_mut("package")
+            .and_then(|p| p.as_array_of_tables_mut())
+        {
+            for package in packages.iter_mut() {
+                if package.contains_key("source") {
+                    continue;
+                }
+                let Some(new_version) = package
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .and_then(|name| updates.get(name))
+                else {
+                    continue;
+                };
+                let new_version = new_version.to_string();
+                if package.get("version").and_then(|v| v.as_str()) != Some(new_version.as_str()) {
+                    package["version"] = toml_edit::value(new_version);
+                    modified = true;
+                }
+            }
+        }
+
+        if modified {
+            std::fs::write(&lockfile, doc.to_string())?;
+        }
+
+        Ok(())
+    }
+
     /// Path of a crate's file in the sparse index, e.g. `se/rd/serde`.
     fn sparse_index_path(name: &str) -> String {
         let name = name.to_lowercase();
@@ -1039,6 +1085,73 @@ publish.workspace = true
 
         let version = RustAdapter::read_version(&manifest).unwrap();
         assert_eq!(version, Version::new(2, 5, 0));
+    }
+
+    #[test]
+    fn update_all_dependency_versions_syncs_lockfile() {
+        let dir = TempDir::new().unwrap();
+        let lock = r#"version = 4
+
+[[package]]
+name = "mpp"
+version = "0.21.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abc"
+"#;
+        std::fs::write(dir.path().join("Cargo.lock"), lock).unwrap();
+
+        let mut updates = HashMap::new();
+        updates.insert("mpp".to_string(), Version::new(0, 21, 1));
+        RustAdapter::update_all_dependency_versions(&[], dir.path(), &updates).unwrap();
+
+        let updated = std::fs::read_to_string(dir.path().join("Cargo.lock")).unwrap();
+        assert_eq!(
+            updated,
+            lock.replace(
+                "name = \"mpp\"\nversion = \"0.21.0\"",
+                "name = \"mpp\"\nversion = \"0.21.1\""
+            )
+        );
+    }
+
+    #[test]
+    fn sync_lockfile_leaves_registry_packages_of_the_same_name() {
+        let dir = TempDir::new().unwrap();
+        let lock = r#"version = 4
+
+[[package]]
+name = "foo"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "foo"
+version = "2.0.0"
+"#;
+        std::fs::write(dir.path().join("Cargo.lock"), lock).unwrap();
+
+        let mut updates = HashMap::new();
+        updates.insert("foo".to_string(), Version::new(2, 1, 0));
+        RustAdapter::sync_lockfile(dir.path(), &updates).unwrap();
+
+        let updated = std::fs::read_to_string(dir.path().join("Cargo.lock")).unwrap();
+        assert_eq!(updated, lock.replace("2.0.0", "2.1.0"));
+    }
+
+    #[test]
+    fn sync_lockfile_without_lockfile_is_a_no_op() {
+        let dir = TempDir::new().unwrap();
+        let mut updates = HashMap::new();
+        updates.insert("foo".to_string(), Version::new(1, 0, 0));
+        RustAdapter::sync_lockfile(dir.path(), &updates).unwrap();
+        assert!(!dir.path().join("Cargo.lock").exists());
     }
 
     #[test]
