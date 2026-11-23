@@ -118,6 +118,7 @@ fn each_workspace_tags_its_own_releases() {
     let report = json_stdout(&rust);
     assert_eq!(report["tags_created"], serde_json::json!(["rust/v1.0.0"]));
     assert_eq!(report["tag_prefix"], "rust/");
+    assert_eq!(report["release_tags"], serde_json::json!(["rust/v1.0.0"]));
 
     // The same version in another workspace is not mistaken for released.
     let go = changelogs(&root.join("go"), &["publish", "--json"]);

@@ -122,9 +122,15 @@ impl Config {
         Ok(config)
     }
 
-    /// Rejects a `tag_prefix` that would not make a valid git tag name.
+    /// Rejects a `tag_prefix` that would not make a valid git tag name, before
+    /// anything is published.
     pub fn validate(&self) -> Result<()> {
         if let Some(prefix) = &self.tag_prefix {
+            let components: Vec<&str> = prefix.split('/').collect();
+            let (last, complete) = components.split_last().expect("split yields one");
+            // Git refname rules: no component starts with a dot or ends with
+            // `.lock`; the last one continues into the version, so only its
+            // start is known.
             let invalid = prefix.is_empty()
                 || prefix.starts_with('/')
                 || prefix.starts_with('-')
@@ -133,7 +139,11 @@ impl Config {
                 || prefix.contains("@{")
                 || prefix
                     .chars()
-                    .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c));
+                    .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c))
+                || complete
+                    .iter()
+                    .any(|part| part.starts_with('.') || part.ends_with(".lock"))
+                || last.starts_with('.');
             if invalid {
                 return Err(Error::InvalidTagPrefix(prefix.clone()));
             }
@@ -261,7 +271,19 @@ mod tests {
 
     #[test]
     fn test_invalid_tag_prefix_is_rejected() {
-        for prefix in ["", "/python/", "py thon/", "a..b/", "-x/", "a:b/", "a//b"] {
+        for prefix in [
+            "",
+            "/python/",
+            "py thon/",
+            "a..b/",
+            "-x/",
+            "a:b/",
+            "a//b",
+            ".sdk/",
+            "sdk.lock/",
+            "sdk/.go/",
+            "sdk/.",
+        ] {
             let dir = TempDir::new().unwrap();
             std::fs::write(
                 dir.path().join("config.toml"),
@@ -273,7 +295,14 @@ mod tests {
                 "{prefix:?} should be rejected"
             );
         }
-        for prefix in ["python/", "sdk-", "go/v2-"] {
+        for prefix in [
+            "python/",
+            "sdk-",
+            "go/v2-",
+            "sdk/go/",
+            "sdk.v1/",
+            "sdk/lock-",
+        ] {
             let dir = TempDir::new().unwrap();
             std::fs::write(
                 dir.path().join("config.toml"),

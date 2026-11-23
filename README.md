@@ -102,7 +102,7 @@ Or download directly from [GitHub Releases](https://github.com/wevm/changelogs/r
 for scripts such as the GitHub Action:
 
 - `version`: `{"format": "root" | "per-crate", "releases": [{"name", "old_version", "new_version", "bump", "is_promotion", "changelog_path", "notes"}], "unified_version", "unified_tag"}`. `notes` is the changelog section added for the release, and `unified_version` and `unified_tag` (with any `tag_prefix`) are set in root format.
-- `publish`: `{"published": [{"name", "version", "tag"}], "skipped": [{"name", "version", "tag", "reason"}], "failed": [{"name", "version", "error"}], "tags_created": [...], "tag_prefix"}`. It is printed even when publishing fails, before the non-zero exit.
+- `publish`: `{"published": [{"name", "version", "tag"}], "skipped": [{"name", "version", "tag", "reason"}], "failed": [{"name", "version", "error"}], "tags_created": [...], "tag_prefix", "release_tags"}`. `release_tags` are the tags of the workspace's current versions. It is printed even when publishing fails, before the non-zero exit.
 
 ## Configuration
 
