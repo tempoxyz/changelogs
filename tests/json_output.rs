@@ -123,6 +123,7 @@ fn version_dry_run_json_per_crate() {
                 "notes": "## `lib@0.2.0`\n\n### Minor Changes\n\n- Add a thing.\n\n",
             }],
             "unified_version": null,
+            "unified_tag": null,
         })
     );
     // Human progress goes to stderr, and a dry run changes nothing.
@@ -226,7 +227,7 @@ fn version_json_without_changes_prints_empty_plan() {
     assert!(output.status.success());
     assert_eq!(
         json_stdout(&output),
-        json!({"format": "per-crate", "releases": [], "unified_version": null})
+        json!({"format": "per-crate", "releases": [], "unified_version": null, "unified_tag": null})
     );
 }
 
@@ -264,6 +265,7 @@ fn publish_json_tags_only() {
             ],
             "failed": [],
             "tags_created": ["app@1.0.0", "tool@0.3.0"],
+            "tag_prefix": "",
         })
     );
 

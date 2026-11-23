@@ -28,6 +28,12 @@ pub struct Config {
 
     #[serde(default)]
     pub ai: AiConfig,
+
+    /// Prepended to every release tag, such as `python/` for `python/v1.2.0`
+    /// or `python/pkg@1.2.0`. Lets several workspaces release from one
+    /// repository without their tags colliding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -95,6 +101,7 @@ impl Default for Config {
             ignore: Vec::new(),
             private: Vec::new(),
             ai: AiConfig::default(),
+            tag_prefix: None,
         }
     }
 }
@@ -110,8 +117,33 @@ impl Config {
         let content = std::fs::read_to_string(&config_path)?;
         let config: Config =
             toml::from_str(&content).map_err(|e| Error::ConfigParse(e.to_string()))?;
+        config.validate()?;
 
         Ok(config)
+    }
+
+    /// Rejects a `tag_prefix` that would not make a valid git tag name.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(prefix) = &self.tag_prefix {
+            let invalid = prefix.is_empty()
+                || prefix.starts_with('/')
+                || prefix.starts_with('-')
+                || prefix.contains("..")
+                || prefix.contains("//")
+                || prefix.contains("@{")
+                || prefix
+                    .chars()
+                    .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c));
+            if invalid {
+                return Err(Error::InvalidTagPrefix(prefix.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// `tag` with the configured `tag_prefix` in front of it.
+    pub fn prefixed_tag(&self, tag: &str) -> String {
+        format!("{}{tag}", self.tag_prefix.as_deref().unwrap_or(""))
     }
 
     pub fn save(&self, changelog_dir: &Path) -> Result<()> {
@@ -132,6 +164,9 @@ dependent_bump = "patch"
 
 # Packages to ignore
 ignore = []
+
+# Prefix for every release tag, for several workspaces in one repository
+# tag_prefix = "python/"   # tags python/v1.2.0 (root format) or python/pkg@1.2.0
 
 # Private Rust packages to version and tag without publishing
 private = []
@@ -196,6 +231,7 @@ mod tests {
             ai: AiConfig {
                 command: Some("test-cmd".into()),
             },
+            tag_prefix: Some("python/".into()),
         };
 
         config.save(dir.path()).unwrap();
@@ -210,6 +246,42 @@ mod tests {
         assert_eq!(loaded.ignore, vec!["foo"]);
         assert_eq!(loaded.private, vec!["private-tool"]);
         assert_eq!(loaded.ai.command.as_deref(), Some("test-cmd"));
+        assert_eq!(loaded.tag_prefix.as_deref(), Some("python/"));
+    }
+
+    #[test]
+    fn test_tag_prefix_prefixes_tags() {
+        let config = Config {
+            tag_prefix: Some("rust/".into()),
+            ..Default::default()
+        };
+        assert_eq!(config.prefixed_tag("v1.2.0"), "rust/v1.2.0");
+        assert_eq!(Config::default().prefixed_tag("v1.2.0"), "v1.2.0");
+    }
+
+    #[test]
+    fn test_invalid_tag_prefix_is_rejected() {
+        for prefix in ["", "/python/", "py thon/", "a..b/", "-x/", "a:b/", "a//b"] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(
+                dir.path().join("config.toml"),
+                format!("tag_prefix = {prefix:?}\n"),
+            )
+            .unwrap();
+            assert!(
+                matches!(Config::load(dir.path()), Err(Error::InvalidTagPrefix(_))),
+                "{prefix:?} should be rejected"
+            );
+        }
+        for prefix in ["python/", "sdk-", "go/v2-"] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(
+                dir.path().join("config.toml"),
+                format!("tag_prefix = {prefix:?}\n"),
+            )
+            .unwrap();
+            assert!(Config::load(dir.path()).is_ok(), "{prefix:?} should load");
+        }
     }
 
     #[test]

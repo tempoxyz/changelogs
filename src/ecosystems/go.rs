@@ -102,6 +102,10 @@ impl EcosystemAdapter for GoAdapter {
     }
 
     fn is_published(name: &str, version: &Version) -> Result<bool> {
+        Self::is_released(name, version, &super::root_tag_name(version))
+    }
+
+    fn is_released(name: &str, version: &Version, release_tag: &str) -> Result<bool> {
         // `name` is the full module path (set in `discover`). Query the Go module
         // proxy directly so already-released versions are skipped on republish.
         //
@@ -117,7 +121,7 @@ impl EcosystemAdapter for GoAdapter {
         }
         // A local release tag means the version is out even when the proxy has
         // not fetched it yet.
-        if super::git_tag_exists(Path::new("."), &super::root_tag_name(version)) {
+        if super::git_tag_exists(Path::new("."), release_tag) {
             return Ok(true);
         }
         check_proxy_published(name, version)

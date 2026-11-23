@@ -1,6 +1,5 @@
 use anyhow::Result;
 use changelogs::config::ChangelogFormat;
-use changelogs::ecosystems;
 use changelogs::graph::DependencyGraph;
 use changelogs::output::{self, FailedPackage, PublishOutput, PublishedPackage, SkippedPackage};
 use changelogs::{Ecosystem, Package, PublishResult, SkipReason, Workspace};
@@ -32,6 +31,7 @@ fn run(
 ) -> Result<()> {
     let workspace = Workspace::load_with_ecosystem(ecosystem)?;
     let config = &workspace.config;
+    report.tag_prefix = config.tag_prefix.clone().unwrap_or_default();
 
     let all_publishable = workspace.get_publishable_packages()?;
     let packages: Vec<&Package> = all_publishable
@@ -223,7 +223,7 @@ fn create_unified_tag(
     json: bool,
     created: &mut Vec<String>,
 ) -> Result<()> {
-    create_tag(workspace, ecosystems::root_tag_name(version), json, created)?;
+    create_tag(workspace, workspace.root_tag(version), json, created)?;
     say!(json, "\nDon't forget to push tags: git push --follow-tags");
     Ok(())
 }

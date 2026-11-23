@@ -88,7 +88,11 @@ impl EcosystemAdapter for SwiftAdapter {
         Ok(modified)
     }
 
-    fn is_published(_name: &str, version: &Version) -> Result<bool> {
+    fn is_published(name: &str, version: &Version) -> Result<bool> {
+        Self::is_released(name, version, &super::root_tag_name(version))
+    }
+
+    fn is_released(_name: &str, version: &Version, release_tag: &str) -> Result<bool> {
         // `0.0.0` is the implicit baseline when no changelogs version comment or
         // git tag exists. Treat it as already published so `publish` does not
         // create a meaningless bootstrap tag.
@@ -96,10 +100,7 @@ impl EcosystemAdapter for SwiftAdapter {
             return Ok(true);
         }
 
-        Ok(super::git_tag_exists(
-            Path::new("."),
-            &super::root_tag_name(version),
-        ))
+        Ok(super::git_tag_exists(Path::new("."), release_tag))
     }
 
     fn publish(_pkg: &Package, _dry_run: bool, _registry: Option<&str>) -> Result<PublishResult> {

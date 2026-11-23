@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use changelogs::config::ChangelogFormat;
-use changelogs::{Ecosystem, Workspace, changelog_writer, ecosystems};
+use changelogs::{Ecosystem, Workspace, changelog_writer};
 
 /// Prints the CHANGELOG.md section of release `tag`, without its heading, such
 /// as for GitHub release notes. `tag` must be the release tag of a package's
@@ -12,7 +12,7 @@ pub fn run(tag: &str, ecosystem: Option<Ecosystem>) -> Result<()> {
         ChangelogFormat::Root => {
             let package = workspace
                 .unified_package()
-                .filter(|pkg| ecosystems::root_tag_name(&pkg.version) == tag);
+                .filter(|pkg| workspace.root_tag(&pkg.version) == tag);
             (package, workspace.root.join("CHANGELOG.md"))
         }
         ChangelogFormat::PerCrate => {
