@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.0 (2026-11-23)
+
+### Minor Changes
+
+- Added `tag_prefix` to `.changelog/config.toml` and a `working-directory` input to both actions, so several workspaces can release from one repository without their tags, release PRs, releases or PR comments colliding. (by @brendanjryan, [#203](https://github.com/tempoxyz/changelogs/pull/203))
+
+### Patch Changes
+
+- Trimmed dependencies: dropped `petgraph` and `rand`, and updated `cargo_metadata` to 0.23, cutting the dependency tree from 191 to 129 crates. (by @brendanjryan, [#206](https://github.com/tempoxyz/changelogs/pull/206))
+- Dropped the `chrono` dependency: changelog dates now come from the standard library. Updated `url` to 2.5.9. (by @brendanjryan, [#204](https://github.com/tempoxyz/changelogs/pull/204))
+- The install script now downloads the newest release's binaries instead of the `latest` prerelease, which immutable releases had frozen at an old build. (by @brendanjryan, [#199](https://github.com/tempoxyz/changelogs/pull/199))
+- Update dependencies. (by @grandizzy, [#197](https://github.com/tempoxyz/changelogs/pull/197))
+
 ## 0.11.0 (2026-10-26)
 
 ### Minor Changes
