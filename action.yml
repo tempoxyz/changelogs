@@ -48,6 +48,10 @@ inputs:
     description: 'Create GitHub releases as drafts, so a later job can attach assets before publishing them (required when the repository has immutable releases). The created tags are in the releaseTags output.'
     required: false
     default: 'false'
+  working-directory:
+    description: 'Directory of the workspace to release, relative to the repository root, such as python for a package in python/ with its own .changelog/. Give each workspace in a repository its own tag_prefix in .changelog/config.toml and its own branch.'
+    required: false
+    default: '.'
   github-token:
     description: 'GitHub token for creating PRs, pushing tags, and creating releases'
     required: false
@@ -139,6 +143,7 @@ runs:
     - name: Check for changelogs
       id: check
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         CONVENTIONAL_COMMIT_INPUT: ${{ inputs.conventional-commit }}
         ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
@@ -194,6 +199,7 @@ runs:
       if: steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true'
       id: version
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
         PRERELEASE_INPUT: ${{ inputs.prerelease }}
@@ -227,7 +233,10 @@ runs:
         if [ "$(jq -r '.format' "$plan_file")" = "root" ]; then
           # Root format releases the repository as one unified version.
           new_version=$(jq -r '.unified_version // empty' "$plan_file")
-          if [ -n "$new_version" ]; then
+          new_tag=$(jq -r '.unified_tag // empty' "$plan_file")
+          if [ -n "$new_tag" ]; then
+            versions="\`$new_tag\`"
+          elif [ -n "$new_version" ]; then
             versions="\`v$new_version\`"
           else
             versions=""
@@ -256,6 +265,7 @@ runs:
     - name: Run post-version command
       if: (steps.check.outputs.hasChangelogs == 'true' || steps.check.outputs.hasPrereleases == 'true') && inputs.post-version-command != ''
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         POST_VERSION_COMMAND: ${{ inputs.post-version-command }}
       run: bash -c "$POST_VERSION_COMMAND"
@@ -381,6 +391,7 @@ runs:
       if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false'
       id: publish
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         CARGO_REGISTRY_TOKEN: ${{ inputs.publish-mode != 'tags-only' && inputs.crate-token || '' }}
         ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
@@ -407,6 +418,8 @@ runs:
         packages=$(jq -c '[(.published + .skipped)[].name]' "$report" || true)
         tags=$(jq -c '.tags_created' "$report" || true)
         echo "tags=${tags:-[]}" >> $GITHUB_OUTPUT
+        tag_prefix=$(jq -r '.tag_prefix // ""' "$report" || true)
+        echo "tagPrefix=$tag_prefix" >> $GITHUB_OUTPUT
 
         if [ "$packages" != "[]" ] && [ -n "$packages" ]; then
           echo "published=true" >> $GITHUB_OUTPUT
@@ -446,10 +459,12 @@ runs:
       id: releases
       if: steps.check.outputs.hasChangelogs == 'false' && steps.check.outputs.hasPrereleases == 'false' && steps.publish.outcome == 'success'
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         DRAFT_RELEASES: ${{ inputs.draft-releases }}
         ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
         GH_TOKEN: ${{ inputs.github-token }}
+        TAG_PREFIX: ${{ steps.publish.outputs.tagPrefix }}
       run: |
         export PATH="$HOME/.local/bin:$PATH"
         ECOSYSTEM_FLAG=()
@@ -463,8 +478,9 @@ runs:
         release_tags=()
         failed_tags=()
 
-        # Get tags that were just pushed
-        for tag in $(git tag --points-at HEAD); do
+        # Get tags that were just pushed. Only this workspace's: other
+        # workspaces in the repository release their own tags.
+        for tag in $(git tag --points-at HEAD --list "${TAG_PREFIX}*"); do
           if is_draft=$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null); then
             echo "GitHub release $tag already exists"
             # A draft left by an earlier run still needs its assets and publishing.
@@ -496,9 +512,11 @@ runs:
               previous_tag=$(git tag --list "${prefix}*" --sort=-version:refname | { grep -Fxv -- "$tag" || true; } | head -1)
             fi
           else
-            previous_tag=$(git tag --list "v*" --sort=-version:refname | awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}')
+            # Root tags are v{version} after any tag_prefix, such as python/v1.2.0.
+            prefix="${tag%v[0-9]*}"
+            previous_tag=$(git tag --list "${prefix}v*" --sort=-version:refname | awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}')
             if [ -z "$previous_tag" ]; then
-              previous_tag=$(git tag --list "v*" --sort=-version:refname | { grep -Fxv -- "$tag" || true; } | head -1)
+              previous_tag=$(git tag --list "${prefix}v*" --sort=-version:refname | { grep -Fxv -- "$tag" || true; } | head -1)
             fi
           fi
           

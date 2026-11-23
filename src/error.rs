@@ -28,6 +28,14 @@ pub enum Error {
     #[error("failed to parse changelog {0}: {1}")]
     ChangelogParse(String, String),
 
+    #[error("invalid tag_prefix {0:?}: it must make a valid git tag name")]
+    InvalidTagPrefix(String),
+
+    #[error(
+        "tag_prefix needs a `// changelogs:version` comment in {0}, since prefixed tags are not read as versions"
+    )]
+    TagPrefixNeedsVersionComment(String),
+
     #[error("failed to parse config: {0}")]
     ConfigParse(String),
 

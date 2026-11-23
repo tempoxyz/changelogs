@@ -223,6 +223,17 @@ fn print_version_json(
             .to_string()
     };
 
+    let unified_version = (format == ChangelogFormat::Root)
+        .then(|| {
+            let unified = workspace.unified_package().map(|pkg| pkg.name.as_str());
+            releases
+                .iter()
+                .find(|release| Some(release.name.as_str()) == unified)
+                .or(releases.first())
+                .map(|release| release.new_version.clone())
+        })
+        .flatten();
+
     let output = VersionOutput {
         format,
         releases: releases
@@ -251,16 +262,10 @@ fn print_version_json(
                 }
             })
             .collect(),
-        unified_version: (format == ChangelogFormat::Root)
-            .then(|| {
-                let unified = workspace.unified_package().map(|pkg| pkg.name.as_str());
-                releases
-                    .iter()
-                    .find(|release| Some(release.name.as_str()) == unified)
-                    .or(releases.first())
-                    .map(|release| release.new_version.to_string())
-            })
-            .flatten(),
+        unified_tag: unified_version
+            .as_ref()
+            .map(|version| workspace.root_tag(version)),
+        unified_version: unified_version.map(|version| version.to_string()),
     };
     output::print_json(&output)?;
     Ok(())

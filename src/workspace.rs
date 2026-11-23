@@ -40,6 +40,21 @@ impl Workspace {
             return Err(Error::NotInWorkspace);
         }
 
+        // Go and Swift fall back to the latest unprefixed `v*` tag for their
+        // version, which a prefixed workspace never creates and another
+        // workspace in the repository may own.
+        if config.tag_prefix.is_some() && matches!(ecosystem, Ecosystem::Go | Ecosystem::Swift) {
+            for pkg in &packages {
+                let content = std::fs::read_to_string(&pkg.manifest_path)?;
+                if crate::ecosystems::version_comment::read_version_from_content(&content).is_none()
+                {
+                    return Err(Error::TagPrefixNeedsVersionComment(
+                        pkg.manifest_path.display().to_string(),
+                    ));
+                }
+            }
+        }
+
         Ok(Workspace {
             root,
             packages,
@@ -117,7 +132,14 @@ impl Workspace {
                 continue;
             }
 
-            if private || !ecosystems::is_published(self.ecosystem, &pkg.name, &pkg.version)? {
+            if private
+                || !ecosystems::is_released(
+                    self.ecosystem,
+                    &pkg.name,
+                    &pkg.version,
+                    &self.release_tag(pkg),
+                )?
+            {
                 publishable.push(pkg);
             }
         }
@@ -171,15 +193,25 @@ impl Workspace {
         ecosystems::publish(self.ecosystem, pkg, dry_run, registry)
     }
 
+    /// `pkg`'s own release tag, with the configured `tag_prefix`.
     pub fn tag_name(&self, pkg: &Package) -> String {
-        ecosystems::tag_name(self.ecosystem, pkg)
+        self.config
+            .prefixed_tag(&ecosystems::tag_name(self.ecosystem, pkg))
+    }
+
+    /// The root format's unified `v{version}` tag, with the configured
+    /// `tag_prefix`.
+    pub fn root_tag(&self, version: &Version) -> String {
+        self.config
+            .prefixed_tag(&ecosystems::root_tag_name(version))
     }
 
     /// The tag `publish` creates for `pkg`'s release: the unified `v{version}`
-    /// tag in root format, the package's own tag otherwise.
+    /// tag in root format, the package's own tag otherwise, either with the
+    /// configured `tag_prefix`.
     pub fn release_tag(&self, pkg: &Package) -> String {
         match (self.config.changelog.format, self.unified_package()) {
-            (ChangelogFormat::Root, Some(unified)) => ecosystems::root_tag_name(&unified.version),
+            (ChangelogFormat::Root, Some(unified)) => self.root_tag(&unified.version),
             _ => self.tag_name(pkg),
         }
     }
@@ -207,7 +239,7 @@ impl Workspace {
             if private && unified.version == Version::new(0, 0, 0) {
                 return true;
             }
-            ecosystems::root_tag_name(&unified.version)
+            self.root_tag(&unified.version)
         } else {
             if private && pkg.version == Version::new(0, 0, 0) {
                 return true;

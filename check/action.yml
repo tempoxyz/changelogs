@@ -17,6 +17,10 @@ inputs:
     description: 'GitHub token for commenting on PR'
     required: false
     default: ${{ github.token }}
+  working-directory:
+    description: 'Directory of the workspace to check, relative to the repository root, such as python for a package in python/ with its own .changelog/. Each directory gets its own PR comment.'
+    required: false
+    default: '.'
   comment:
     description: 'Whether to comment on the PR (disabled by default for fork PRs)'
     required: false
@@ -33,6 +37,7 @@ runs:
     - name: Check for changelog
       id: check
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         REF_INPUT: ${{ inputs.ref }}
       run: |
@@ -50,6 +55,8 @@ runs:
           exit 1
         fi
         # Only added, modified or renamed entries count: a deleted changelog is not one.
+        # The pathspec is relative to the working directory; the listed paths
+        # are relative to the repository root.
         CHANGELOGS=$(git diff --name-only --diff-filter=AMR "$base"...HEAD -- '.changelog/*.md' | grep -v config.toml || true)
         if [ -n "$CHANGELOGS" ]; then
           echo "found=true" >> $GITHUB_OUTPUT
@@ -101,6 +108,7 @@ runs:
       id: ai
       if: steps.check.outputs.found == 'false' && inputs.ai != ''
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         AI_INPUT: ${{ inputs.ai }}
         ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
@@ -140,13 +148,26 @@ runs:
         CHANGELOG_FOUND_OUTPUT: ${{ steps.check.outputs.found }}
         HEAD_REF: ${{ github.head_ref }}
         REPO: ${{ github.repository }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: |
+        # A workspace in a subdirectory names it, and keeps its own comment.
+        dir="${WORKING_DIRECTORY#./}"
+        dir="${dir%/}"
+        if [ -z "$dir" ] || [ "$dir" = "." ]; then
+          dir=""
+          SCOPE=""
+          CHANGELOG_DIR=".changelog"
+        else
+          SCOPE=" (\`$dir\`)"
+          CHANGELOG_DIR="$dir/.changelog"
+        fi
+
         if [ "$CHANGELOG_FOUND_OUTPUT" = "true" ]; then
           # Changelog found - show edit link
           CHANGELOG_FILE=$(echo "$CHANGELOG_FILES_OUTPUT" | head -n1)
           EDIT_URL="https://github.com/${REPO}/edit/${HEAD_REF}/${CHANGELOG_FILE}"
           
-          BODY="### ✅ Changelog found on PR.
+          BODY="### ✅ Changelog found on PR${SCOPE}.
 
         [Edit changelog](${EDIT_URL})"
         else
@@ -174,11 +195,11 @@ runs:
           NOUN=${NOUNS[$RANDOM % ${#NOUNS[@]}]}
           VERB=${VERBS[$RANDOM % ${#VERBS[@]}]}
           CHANGELOG_ID="${ADJ}-${NOUN}-${VERB}"
-          NEW_FILE=".changelog/${CHANGELOG_ID}.md"
+          NEW_FILE="${CHANGELOG_DIR}/${CHANGELOG_ID}.md"
           ADD_URL="https://github.com/${REPO}/new/${HEAD_REF}?filename=${NEW_FILE}&value=${ENCODED_TEMPLATE}"
           
           if [ "$AI_GENERATED" = "true" ]; then
-            BODY="### ⚠️ Changelog not found.
+            BODY="### ⚠️ Changelog not found${SCOPE}.
 
         A changelog entry is required before merging. We've generated a suggested changelog based on your changes:
 
@@ -193,7 +214,7 @@ runs:
 
         **[Add changelog](${ADD_URL})** to commit this to your branch."
           else
-            BODY="### ⚠️ Changelog not found.
+            BODY="### ⚠️ Changelog not found${SCOPE}.
 
         A changelog entry is required before merging.
 
@@ -201,6 +222,10 @@ runs:
           fi
         fi
         
+        if [ -n "$dir" ]; then
+          BODY="$BODY"$'\n\n'"<!-- changelogs-check: $dir -->"
+        fi
+
         # Write to file for multiline support
         echo "$BODY" > /tmp/comment_body.md
 
@@ -210,11 +235,20 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: |
-        COMMENT_ID=$(gh api \
+        dir="${WORKING_DIRECTORY#./}"
+        dir="${dir%/}"
+        [ "$dir" = "." ] && dir=""
+        # Each workspace updates the comment that names it; the repository
+        # root keeps the comment without a marker.
+        COMMENT_ID=$(gh api --paginate \
           -H "Accept: application/vnd.github+json" \
           "/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-          --jq '.[] | select(.body | startswith("### ✅ Changelog") or startswith("### ⚠️ Changelog")) | .id' \
+          --jq '.[]' \
+          | jq -r --arg dir "$dir" 'select(.body | startswith("### ✅ Changelog") or startswith("### ⚠️ Changelog"))
+            | select(if $dir == "" then (.body | contains("<!-- changelogs-check:") | not) else (.body | contains("<!-- changelogs-check: " + $dir + " -->")) end)
+            | .id' \
           | head -n1)
         echo "comment_id=$COMMENT_ID" >> $GITHUB_OUTPUT
 

@@ -2,7 +2,7 @@ mod go;
 mod python;
 mod rust;
 mod swift;
-mod version_comment;
+pub(crate) mod version_comment;
 
 pub use go::GoAdapter;
 pub use python::PythonAdapter;
@@ -138,6 +138,16 @@ pub trait EcosystemAdapter {
     where
         Self: Sized;
 
+    /// Checks if a package version is already released, given the release tag
+    /// `publish` would create for it. Ecosystems released through git tags (Go,
+    /// Swift) check that tag; the others check their registry.
+    fn is_released(name: &str, version: &Version, _release_tag: &str) -> Result<bool>
+    where
+        Self: Sized,
+    {
+        Self::is_published(name, version)
+    }
+
     /// Publishes a package to the registry.
     fn publish(pkg: &Package, dry_run: bool, registry: Option<&str>) -> Result<PublishResult>
     where
@@ -241,6 +251,17 @@ pub fn update_dependency_versions(
 
 pub fn is_published(ecosystem: Ecosystem, name: &str, version: &Version) -> Result<bool> {
     dispatch!(ecosystem, is_published(name, version))
+}
+
+/// Whether `version` of `name` is released, where `release_tag` is the tag
+/// `publish` creates for it (including any `tag_prefix`).
+pub fn is_released(
+    ecosystem: Ecosystem,
+    name: &str,
+    version: &Version,
+    release_tag: &str,
+) -> Result<bool> {
+    dispatch!(ecosystem, is_released(name, version, release_tag))
 }
 
 pub fn publish(

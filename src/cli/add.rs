@@ -203,7 +203,7 @@ fn run_ai_generation(
     let diff_to_use = if let Some(base) = base_ref {
         // Diff against base ref (for CI/PR workflows)
         let diff = Command::new("git")
-            .args(["diff", &format!("{}...HEAD", base)])
+            .args(["diff", &format!("{}...HEAD", base), "--", "."])
             .current_dir(&workspace.root)
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -219,7 +219,7 @@ fn run_ai_generation(
     } else {
         // Try staged changes first
         let staged = Command::new("git")
-            .args(["diff", "--cached"])
+            .args(["diff", "--cached", "--", "."])
             .current_dir(&workspace.root)
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -230,7 +230,7 @@ fn run_ai_generation(
         } else {
             // Try unstaged changes
             let unstaged = Command::new("git")
-                .args(["diff"])
+                .args(["diff", "--", "."])
                 .current_dir(&workspace.root)
                 .output()
                 .map(|o| String::from_utf8_lossy(&o.stdout).to_string())

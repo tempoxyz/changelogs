@@ -101,8 +101,8 @@ Or download directly from [GitHub Releases](https://github.com/wevm/changelogs/r
 `publish --json` print a JSON document on stdout and their progress on stderr,
 for scripts such as the GitHub Action:
 
-- `version`: `{"format": "root" | "per-crate", "releases": [{"name", "old_version", "new_version", "bump", "is_promotion", "changelog_path", "notes"}], "unified_version"}`. `notes` is the changelog section added for the release, and `unified_version` is set in root format.
-- `publish`: `{"published": [{"name", "version", "tag"}], "skipped": [{"name", "version", "tag", "reason"}], "failed": [{"name", "version", "error"}], "tags_created": [...]}`. It is printed even when publishing fails, before the non-zero exit.
+- `version`: `{"format": "root" | "per-crate", "releases": [{"name", "old_version", "new_version", "bump", "is_promotion", "changelog_path", "notes"}], "unified_version", "unified_tag"}`. `notes` is the changelog section added for the release, and `unified_version` and `unified_tag` (with any `tag_prefix`) are set in root format.
+- `publish`: `{"published": [{"name", "version", "tag"}], "skipped": [{"name", "version", "tag", "reason"}], "failed": [{"name", "version", "error"}], "tags_created": [...], "tag_prefix"}`. It is printed even when publishing fails, before the non-zero exit.
 
 ## Configuration
 
@@ -117,6 +117,9 @@ ignore = []
 
 # Private Rust packages to version and tag without publishing
 private = []
+
+# Prefix for every release tag, for several workspaces in one repository
+tag_prefix = "python/"  # python/v1.2.0 in root format, python/pkg@1.2.0 per crate
 
 [changelog]
 format = "per-crate"  # or "root"
@@ -351,6 +354,7 @@ merges, so changelogs pushed after the scheduled run ship in the same release.
 | `crate-token` | Crates.io API token for publishing (Rust) | - |
 | `pypi-token` | PyPI API token for publishing (Python) | - |
 | `draft-releases` | Create GitHub releases as drafts so a later job can attach assets and publish them (needed with immutable releases). The `releaseTags` output lists the tags whose releases were created or are still drafts. | `false` |
+| `working-directory` | Directory of the workspace to release, relative to the repository root. See [Monorepos](#monorepos). The check action takes the same input. | `.` |
 | `publish-mode` | `"registry"` publishes to crates.io/PyPI (default). `"tags-only"` intentionally skips registry authentication; only git tags and GitHub releases are created. When no registry authentication is configured, registry upload is skipped automatically. | `registry` |
 
 ### Tag-only publishing (binary releases)
@@ -418,6 +422,46 @@ branch name, set the `branch` input explicitly:
     branch: my-custom-release-branch
 ```
 
+### Monorepos
+
+Several workspaces, even of different ecosystems, can release from one
+repository. Give each its own directory with its own manifest and
+`.changelog/`, and its own `tag_prefix` so their tags never collide:
+
+```text
+python/   pyproject.toml, .changelog/config.toml: tag_prefix = "python/"
+rust/     Cargo.toml,     .changelog/config.toml: tag_prefix = "rust/"
+go/       go.mod,         .changelog/config.toml: tag_prefix = "go/"
+```
+
+The CLI works on the workspace it is run in, so run it from that directory.
+Its AI diff (`add --ai`) covers only that directory. In CI, run one job per
+workspace, pass its directory as `working-directory` to both actions, and
+give each release job its own `branch`:
+
+```yaml
+- uses: tempoxyz/changelogs/check@<sha>
+  with:
+    working-directory: python
+    ecosystem: python
+
+- uses: tempoxyz/changelogs@<sha>
+  with:
+    working-directory: python
+    ecosystem: python
+    branch: changelog-release/main-python
+```
+
+Each workspace then gets its own changelog comment on a PR, its own release
+PR titled with its tag (such as `python/v1.2.0`), and GitHub releases for its
+own tags only. Release notes compare against the previous tag with the same
+prefix.
+
+With a `tag_prefix`, Go and Swift need the `// changelogs:version` comment in
+their manifest, since their fallback reads unprefixed `v*` tags. A Go module
+in a subdirectory is served by `proxy.golang.org` as `<repo>/<dir>` from tags
+named `<dir>/vX.Y.Z`, so its prefix should be its directory.
+
 ### Action Outputs
 
 | Output | Description |
@@ -440,7 +484,7 @@ Changelogs supports Python packages using PEP 621 `pyproject.toml` files.
 - `python -m build` and `twine` installed (`pip install build twine`)
 
 **Limitations:**
-- Single-package repos only (no Python monorepo support)
+- One package per workspace (several workspaces can share a repository; see [Monorepos](#monorepos))
 - PEP 621 only (no `setup.py` or `setup.cfg`)
 
 **Authentication:**
@@ -517,7 +561,7 @@ github.com/owner/repo: minor
 - Already-published versions are skipped via a `proxy.golang.org/<module>/@v/v<ver>.info` lookup
 
 **Limitations:**
-- Single-module repos only (no Go monorepo / multi-`go.mod` support)
+- One module per workspace (several workspaces can share a repository; see [Monorepos](#monorepos))
 - Major version bumps (≥ v2) do not currently rewrite the `module .../vN` suffix
 
 ### SwiftPM

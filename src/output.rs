@@ -13,6 +13,9 @@ pub struct VersionOutput {
     pub releases: Vec<VersionRelease>,
     /// The unified `v{version}` release in root format; null otherwise.
     pub unified_version: Option<String>,
+    /// The unified release's tag in root format, with any `tag_prefix`, such
+    /// as `python/v1.2.0`; null otherwise.
+    pub unified_tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,6 +41,9 @@ pub struct PublishOutput {
     pub failed: Vec<FailedPackage>,
     /// Git tags this run created, to push.
     pub tags_created: Vec<String>,
+    /// The configured `tag_prefix`, empty when none: every release tag of
+    /// this workspace starts with it.
+    pub tag_prefix: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

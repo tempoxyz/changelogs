@@ -9,7 +9,7 @@ use std::process::Command;
 
 pub(super) const VERSION_COMMENT_PREFIX: &str = "// changelogs:version ";
 
-pub(super) fn read_version_from_content(content: &str) -> Option<Version> {
+pub(crate) fn read_version_from_content(content: &str) -> Option<Version> {
     for line in content.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix(VERSION_COMMENT_PREFIX)
