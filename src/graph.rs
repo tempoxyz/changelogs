@@ -1,65 +1,73 @@
 use crate::workspace::Workspace;
-use petgraph::graph::{DiGraph, NodeIndex};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+/// The workspace's packages and the dependencies between them, by name.
 pub struct DependencyGraph {
-    graph: DiGraph<String, ()>,
-    node_indices: HashMap<String, NodeIndex>,
+    /// Each package's dependencies within the workspace.
+    dependencies: HashMap<String, Vec<String>>,
+    /// Each package's direct dependents within the workspace.
+    dependents: HashMap<String, Vec<String>>,
 }
 
 impl DependencyGraph {
     pub fn from_workspace(workspace: &Workspace) -> Self {
-        let mut graph = DiGraph::new();
-        let mut node_indices = HashMap::new();
+        let names: Vec<&str> = workspace.packages.iter().map(|p| p.name.as_str()).collect();
+        let edges = workspace.packages.iter().flat_map(|package| {
+            package
+                .dependencies
+                .iter()
+                .map(move |dep| (package.name.as_str(), dep.as_str()))
+        });
+        Self::from_edges(&names, edges)
+    }
 
-        for package in &workspace.packages {
-            let idx = graph.add_node(package.name.clone());
-            node_indices.insert(package.name.clone(), idx);
-        }
+    /// A graph of `packages` where each `(from, to)` edge means `from` depends
+    /// on `to`. Edges to packages outside `packages` are dropped.
+    fn from_edges<'a>(
+        packages: &[&str],
+        edges: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Self {
+        let mut dependencies: HashMap<String, Vec<String>> = packages
+            .iter()
+            .map(|name| (name.to_string(), Vec::new()))
+            .collect();
+        let mut dependents = dependencies.clone();
 
-        for package in &workspace.packages {
-            let from_idx = node_indices[&package.name];
-            for dep in &package.dependencies {
-                if let Some(&to_idx) = node_indices.get(dep) {
-                    graph.add_edge(from_idx, to_idx, ());
-                }
+        for (from, to) in edges {
+            if !dependencies.contains_key(to) {
+                continue;
+            }
+            if let Some(deps) = dependencies.get_mut(from) {
+                deps.push(to.to_string());
+                dependents
+                    .get_mut(to)
+                    .expect("every package has an entry")
+                    .push(from.to_string());
             }
         }
 
         Self {
-            graph,
-            node_indices,
+            dependencies,
+            dependents,
         }
     }
 
+    /// The packages that depend on `package` directly.
     pub fn dependents(&self, package: &str) -> Vec<String> {
-        let Some(&pkg_idx) = self.node_indices.get(package) else {
-            return Vec::new();
-        };
-
-        self.graph
-            .neighbors_directed(pkg_idx, petgraph::Direction::Incoming)
-            .map(|idx| self.graph[idx].clone())
-            .collect()
+        self.dependents.get(package).cloned().unwrap_or_default()
     }
 
+    /// The packages that depend on `package`, directly or through others.
     pub fn all_dependents(&self, package: &str) -> Vec<String> {
-        let Some(&pkg_idx) = self.node_indices.get(package) else {
-            return Vec::new();
-        };
-
-        let mut visited = std::collections::HashSet::new();
-        let mut stack = vec![pkg_idx];
+        let mut visited = HashSet::new();
+        let mut stack = vec![package];
         let mut result = Vec::new();
 
-        while let Some(idx) = stack.pop() {
-            for neighbor in self
-                .graph
-                .neighbors_directed(idx, petgraph::Direction::Incoming)
-            {
-                if visited.insert(neighbor) {
-                    result.push(self.graph[neighbor].clone());
-                    stack.push(neighbor);
+        while let Some(name) = stack.pop() {
+            for dependent in self.dependents.get(name).into_iter().flatten() {
+                if visited.insert(dependent.as_str()) {
+                    result.push(dependent.clone());
+                    stack.push(dependent);
                 }
             }
         }
@@ -67,15 +75,9 @@ impl DependencyGraph {
         result
     }
 
+    /// The packages `package` depends on directly.
     pub fn dependencies(&self, package: &str) -> Vec<String> {
-        let Some(&pkg_idx) = self.node_indices.get(package) else {
-            return Vec::new();
-        };
-
-        self.graph
-            .neighbors_directed(pkg_idx, petgraph::Direction::Outgoing)
-            .map(|idx| self.graph[idx].clone())
-            .collect()
+        self.dependencies.get(package).cloned().unwrap_or_default()
     }
 }
 
@@ -83,25 +85,13 @@ impl DependencyGraph {
 mod tests {
     use super::*;
 
+    fn graph(packages: &[&str], edges: &[(&'static str, &'static str)]) -> DependencyGraph {
+        DependencyGraph::from_edges(packages, edges.iter().copied())
+    }
+
     #[test]
     fn test_dependents() {
-        let mut graph = DiGraph::new();
-        let a = graph.add_node("a".to_string());
-        let b = graph.add_node("b".to_string());
-        let c = graph.add_node("c".to_string());
-
-        graph.add_edge(b, a, ());
-        graph.add_edge(c, a, ());
-
-        let mut node_indices = HashMap::new();
-        node_indices.insert("a".to_string(), a);
-        node_indices.insert("b".to_string(), b);
-        node_indices.insert("c".to_string(), c);
-
-        let dep_graph = DependencyGraph {
-            graph,
-            node_indices,
-        };
+        let dep_graph = graph(&["a", "b", "c"], &[("b", "a"), ("c", "a")]);
 
         let dependents = dep_graph.dependents("a");
         assert_eq!(dependents.len(), 2);
@@ -111,23 +101,7 @@ mod tests {
 
     #[test]
     fn test_all_dependents_transitive_chain() {
-        let mut graph = DiGraph::new();
-        let a = graph.add_node("a".to_string());
-        let b = graph.add_node("b".to_string());
-        let c = graph.add_node("c".to_string());
-
-        graph.add_edge(b, a, ());
-        graph.add_edge(c, b, ());
-
-        let mut node_indices = HashMap::new();
-        node_indices.insert("a".to_string(), a);
-        node_indices.insert("b".to_string(), b);
-        node_indices.insert("c".to_string(), c);
-
-        let dep_graph = DependencyGraph {
-            graph,
-            node_indices,
-        };
+        let dep_graph = graph(&["a", "b", "c"], &[("b", "a"), ("c", "b")]);
 
         let all = dep_graph.all_dependents("a");
         assert_eq!(all.len(), 2);
@@ -137,27 +111,10 @@ mod tests {
 
     #[test]
     fn test_all_dependents_diamond() {
-        let mut graph = DiGraph::new();
-        let a = graph.add_node("a".to_string());
-        let b = graph.add_node("b".to_string());
-        let c = graph.add_node("c".to_string());
-        let d = graph.add_node("d".to_string());
-
-        graph.add_edge(b, a, ());
-        graph.add_edge(c, a, ());
-        graph.add_edge(d, b, ());
-        graph.add_edge(d, c, ());
-
-        let mut node_indices = HashMap::new();
-        node_indices.insert("a".to_string(), a);
-        node_indices.insert("b".to_string(), b);
-        node_indices.insert("c".to_string(), c);
-        node_indices.insert("d".to_string(), d);
-
-        let dep_graph = DependencyGraph {
-            graph,
-            node_indices,
-        };
+        let dep_graph = graph(
+            &["a", "b", "c", "d"],
+            &[("b", "a"), ("c", "a"), ("d", "b"), ("d", "c")],
+        );
 
         let all = dep_graph.all_dependents("a");
         assert_eq!(all.len(), 3);
@@ -167,44 +124,33 @@ mod tests {
     }
 
     #[test]
+    fn test_all_dependents_cycle() {
+        let dep_graph = graph(&["a", "b"], &[("a", "b"), ("b", "a")]);
+
+        let mut all = dep_graph.all_dependents("a");
+        all.sort();
+        assert_eq!(all, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
     fn test_dependencies() {
-        let mut graph = DiGraph::new();
-        let a = graph.add_node("a".to_string());
-        let b = graph.add_node("b".to_string());
-        let c = graph.add_node("c".to_string());
+        let dep_graph = graph(&["a", "b", "c"], &[("b", "a"), ("c", "a")]);
 
-        graph.add_edge(b, a, ());
-        graph.add_edge(c, a, ());
+        assert_eq!(dep_graph.dependencies("b"), vec!["a".to_string()]);
+        assert!(dep_graph.dependencies("a").is_empty());
+    }
 
-        let mut node_indices = HashMap::new();
-        node_indices.insert("a".to_string(), a);
-        node_indices.insert("b".to_string(), b);
-        node_indices.insert("c".to_string(), c);
+    #[test]
+    fn test_external_dependencies_are_dropped() {
+        let dep_graph = graph(&["a"], &[("a", "serde")]);
 
-        let dep_graph = DependencyGraph {
-            graph,
-            node_indices,
-        };
-
-        let deps = dep_graph.dependencies("b");
-        assert_eq!(deps, vec!["a".to_string()]);
-
-        let deps = dep_graph.dependencies("a");
-        assert!(deps.is_empty());
+        assert!(dep_graph.dependencies("a").is_empty());
+        assert!(dep_graph.dependents("serde").is_empty());
     }
 
     #[test]
     fn test_nonexistent_package() {
-        let mut graph = DiGraph::new();
-        let a = graph.add_node("a".to_string());
-
-        let mut node_indices = HashMap::new();
-        node_indices.insert("a".to_string(), a);
-
-        let dep_graph = DependencyGraph {
-            graph,
-            node_indices,
-        };
+        let dep_graph = graph(&["a"], &[]);
 
         assert!(dep_graph.dependents("nonexistent").is_empty());
         assert!(dep_graph.all_dependents("nonexistent").is_empty());
@@ -213,20 +159,7 @@ mod tests {
 
     #[test]
     fn test_no_dependents() {
-        let mut graph = DiGraph::new();
-        let a = graph.add_node("a".to_string());
-        let b = graph.add_node("b".to_string());
-
-        graph.add_edge(b, a, ());
-
-        let mut node_indices = HashMap::new();
-        node_indices.insert("a".to_string(), a);
-        node_indices.insert("b".to_string(), b);
-
-        let dep_graph = DependencyGraph {
-            graph,
-            node_indices,
-        };
+        let dep_graph = graph(&["a", "b"], &[("b", "a")]);
 
         assert!(dep_graph.dependents("b").is_empty());
     }
