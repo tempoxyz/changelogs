@@ -29,17 +29,13 @@ serde_yaml = "0.9"
 semver = { version = "1", features = ["serde"] }
 
 # Cargo/workspace
-cargo_metadata = "0.20"
-
-# Graph
-petgraph = "0.8"
+cargo_metadata = "0.23"
 
 # Errors
 thiserror = "2"
 anyhow = "1"
 
 # Utils
-rand = "0.10"
 chrono = "0.4"
 regex = "1"
 

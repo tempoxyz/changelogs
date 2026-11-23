@@ -1,6 +1,5 @@
 use crate::BumpType;
 use crate::error::{Error, Result};
-use rand::RngExt;
 use regex::Regex;
 
 use std::path::Path;
@@ -31,11 +30,17 @@ const VERBS: &[&str] = &[
 ];
 
 pub fn generate_id() -> String {
-    let mut rng = rand::rng();
-    let adj = ADJECTIVES[rng.random_range(0..ADJECTIVES.len())];
-    let noun = NOUNS[rng.random_range(0..NOUNS.len())];
-    let verb = VERBS[rng.random_range(0..VERBS.len())];
+    let adj = ADJECTIVES[random_below(ADJECTIVES.len())];
+    let noun = NOUNS[random_below(NOUNS.len())];
+    let verb = VERBS[random_below(VERBS.len())];
     format!("{}-{}-{}", adj, noun, verb)
+}
+
+/// A random index below `n`. The names only need to differ between entries,
+/// not resist prediction, so std's randomly keyed hasher is enough.
+fn random_below(n: usize) -> usize {
+    use std::hash::{BuildHasher, RandomState};
+    (RandomState::new().hash_one(std::time::SystemTime::now()) % n as u64) as usize
 }
 
 #[derive(Debug, Clone)]
