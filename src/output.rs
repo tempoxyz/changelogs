@@ -44,6 +44,10 @@ pub struct PublishOutput {
     /// The configured `tag_prefix`, empty when none: every release tag of
     /// this workspace starts with it.
     pub tag_prefix: String,
+    /// The release tags of this workspace's current versions, whether this
+    /// run created them or an earlier one did: the tags whose GitHub releases
+    /// belong to this workspace.
+    pub release_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

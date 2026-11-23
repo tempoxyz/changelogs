@@ -420,6 +420,8 @@ runs:
         echo "tags=${tags:-[]}" >> $GITHUB_OUTPUT
         tag_prefix=$(jq -r '.tag_prefix // ""' "$report" || true)
         echo "tagPrefix=$tag_prefix" >> $GITHUB_OUTPUT
+        release_tags=$(jq -c '.release_tags // []' "$report" || true)
+        echo "releaseTags=${release_tags:-[]}" >> $GITHUB_OUTPUT
 
         if [ "$packages" != "[]" ] && [ -n "$packages" ]; then
           echo "published=true" >> $GITHUB_OUTPUT
@@ -464,6 +466,7 @@ runs:
         DRAFT_RELEASES: ${{ inputs.draft-releases }}
         ECOSYSTEM_INPUT: ${{ inputs.ecosystem }}
         GH_TOKEN: ${{ inputs.github-token }}
+        OWN_TAGS: ${{ steps.publish.outputs.releaseTags }}
         TAG_PREFIX: ${{ steps.publish.outputs.tagPrefix }}
       run: |
         export PATH="$HOME/.local/bin:$PATH"
@@ -478,9 +481,13 @@ runs:
         release_tags=()
         failed_tags=()
 
-        # Get tags that were just pushed. Only this workspace's: other
-        # workspaces in the repository release their own tags.
-        for tag in $(git tag --points-at HEAD --list "${TAG_PREFIX}*"); do
+        # Get tags that were just pushed. Only this workspace's release tags:
+        # other workspaces in the repository, even ones whose prefix starts
+        # with this one's, release their own.
+        for tag in $(git tag --points-at HEAD); do
+          if ! jq -e --arg tag "$tag" 'index($tag) != null' <<< "${OWN_TAGS:-[]}" > /dev/null; then
+            continue
+          fi
           if is_draft=$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null); then
             echo "GitHub release $tag already exists"
             # A draft left by an earlier run still needs its assets and publishing.
@@ -512,11 +519,19 @@ runs:
               previous_tag=$(git tag --list "${prefix}*" --sort=-version:refname | { grep -Fxv -- "$tag" || true; } | head -1)
             fi
           else
-            # Root tags are v{version} after any tag_prefix, such as python/v1.2.0.
-            prefix="${tag%v[0-9]*}"
-            previous_tag=$(git tag --list "${prefix}v*" --sort=-version:refname | awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}')
+            # Root tags are v{version} after the configured tag_prefix, such as
+            # python/v1.2.0.
+            # Keep only bare v<semver> after the prefix, so a workspace whose
+            # prefix extends this one's (go/v2- under go/) doesn't match.
+            prefix="${TAG_PREFIX}"
+            root_tags=$(git tag --list "${prefix}v*" --sort=-version:refname | while IFS= read -r t; do
+              if [[ "${t#"$prefix"}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][^/]*)?$ ]]; then
+                printf '%s\n' "$t"
+              fi
+            done)
+            previous_tag=$(awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}' <<< "$root_tags")
             if [ -z "$previous_tag" ]; then
-              previous_tag=$(git tag --list "${prefix}v*" --sort=-version:refname | { grep -Fxv -- "$tag" || true; } | head -1)
+              previous_tag=$({ grep -Fxv -- "$tag" || true; } <<< "$root_tags" | head -1)
             fi
           fi
           
