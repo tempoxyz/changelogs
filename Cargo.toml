@@ -40,7 +40,6 @@ anyhow = "1"
 
 # Utils
 rand = "0.10"
-chrono = "0.4"
 regex = "1"
 
 # HTTP (for PyPI and Go module proxy)
