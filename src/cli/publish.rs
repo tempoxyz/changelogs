@@ -32,6 +32,12 @@ fn run(
     let workspace = Workspace::load_with_ecosystem(ecosystem)?;
     let config = &workspace.config;
     report.tag_prefix = config.tag_prefix.clone().unwrap_or_default();
+    for pkg in &workspace.packages {
+        let tag = workspace.release_tag(pkg);
+        if !config.ignore.contains(&pkg.name) && !report.release_tags.contains(&tag) {
+            report.release_tags.push(tag);
+        }
+    }
 
     let all_publishable = workspace.get_publishable_packages()?;
     let packages: Vec<&Package> = all_publishable

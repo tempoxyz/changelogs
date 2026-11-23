@@ -266,6 +266,7 @@ fn publish_json_tags_only() {
             "failed": [],
             "tags_created": ["app@1.0.0", "tool@0.3.0"],
             "tag_prefix": "",
+            "release_tags": ["app@1.0.0", "tool@0.3.0"],
         })
     );
 
