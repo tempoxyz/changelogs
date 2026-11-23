@@ -36,7 +36,6 @@ thiserror = "2"
 anyhow = "1"
 
 # Utils
-chrono = "0.4"
 regex = "1"
 
 # HTTP (for PyPI and Go module proxy)
