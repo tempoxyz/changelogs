@@ -521,10 +521,17 @@ runs:
           else
             # Root tags are v{version} after the configured tag_prefix, such as
             # python/v1.2.0.
+            # Keep only bare v<semver> after the prefix, so a workspace whose
+            # prefix extends this one's (go/v2- under go/) doesn't match.
             prefix="${TAG_PREFIX}"
-            previous_tag=$(git tag --list "${prefix}v*" --sort=-version:refname | awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}')
+            root_tags=$(git tag --list "${prefix}v*" --sort=-version:refname | while IFS= read -r t; do
+              if [[ "${t#"$prefix"}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][^/]*)?$ ]]; then
+                printf '%s\n' "$t"
+              fi
+            done)
+            previous_tag=$(awk -v cur="$tag" '$0==cur{found=1;next} found{print;exit}' <<< "$root_tags")
             if [ -z "$previous_tag" ]; then
-              previous_tag=$(git tag --list "${prefix}v*" --sort=-version:refname | { grep -Fxv -- "$tag" || true; } | head -1)
+              previous_tag=$({ grep -Fxv -- "$tag" || true; } <<< "$root_tags" | head -1)
             fi
           fi
           
